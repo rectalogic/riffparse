@@ -1,0 +1,11 @@
+[package]
+name = "riffparse"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["std"]
+std = ["binrw/std", "binrw/verbose-backtrace"]
+
+[dependencies]
+binrw = { version = "0.15.0", default-features = false }
