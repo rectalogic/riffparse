@@ -1,33 +1,30 @@
-use alloc::rc::Rc;
 use binrw::{
     BinRead, BinResult,
     io::{Read, Seek},
 };
-use core::{cell::RefCell, fmt::Debug, iter::Iterator};
+use core::{fmt::Debug, iter::Iterator};
 
 use crate::fourcc::FourCC;
 
 pub struct RiffParser<R> {
-    reader: RefCell<R>,
+    reader: R,
 }
 
 impl<R: Read + Seek> RiffParser<R> {
     pub fn new(reader: R) -> Self {
-        Self {
-            reader: RefCell::new(reader),
-        }
+        Self { reader }
     }
 
     pub fn skip_chunk(&mut self, chunk: &mut RiffChunk) -> BinResult<()> {
-        chunk.skip(&mut *self.reader.borrow_mut())
+        chunk.skip(&mut self.reader)
     }
 
     pub fn read_chunk_vec(&mut self, chunk: &mut RiffChunk) -> BinResult<Vec<u8>> {
-        chunk.read_vec(&mut *self.reader.borrow_mut())
+        chunk.read_vec(&mut self.reader)
     }
 
     pub fn read_chunk(&mut self, chunk: &mut RiffChunk, buffer: &mut [u8]) -> BinResult<()> {
-        chunk.read(&mut *self.reader.borrow_mut(), buffer)
+        chunk.read(&mut self.reader, buffer)
     }
 }
 
@@ -35,7 +32,7 @@ impl<R: Read + Seek> Iterator for RiffParser<R> {
     type Item = BinResult<RiffChunk>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let chunk_type = match ChunkType::read(&mut *self.reader.borrow_mut()) {
+        let chunk_type = match ChunkType::read(&mut self.reader) {
             Ok(chunk_type) => chunk_type,
             Err(e) => return Some(Err(e)),
         };
@@ -46,6 +43,8 @@ impl<R: Read + Seek> Iterator for RiffParser<R> {
         // caller may want the stack too so it knows where it is - api to fetch immutable view on stack
         // also need to prevent RiffChunk::skip/read from being called more than one (need to track consumed on it, so if already consumed disallow)
         // track consumed in RiffChunk, make iter return &mut RiffChunk (and keep on stack) - so read/skip updates that instance
+        //
+        // do we need to return RiffChunk to user? read/skip could just always operate on top of stack
     }
 }
 
