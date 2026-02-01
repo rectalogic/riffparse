@@ -35,13 +35,13 @@ impl<R: Read + Seek> Iterator for RiffParser<R> {
     type Item = BinResult<RiffChunk>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let riff_type = match ChunkType::read(&mut *self.reader.borrow_mut()) {
-            Ok(riff_type) => riff_type,
+        let chunk_type = match ChunkType::read(&mut *self.reader.borrow_mut()) {
+            Ok(chunk_type) => chunk_type,
             Err(e) => return Some(Err(e)),
         };
-        Some(Ok(RiffChunk::new(riff_type)))
+        Some(Ok(RiffChunk::new(chunk_type)))
 
-        //XXX need a stack of riff_type, and keep track of amount read each time and pop when consumed
+        //XXX need a stack of chunk_type, and keep track of amount read each time and pop when consumed
         //XXX Seek::stream_position
         // caller may want the stack too so it knows where it is - api to fetch immutable view on stack
         // also need to prevent RiffChunk::skip/read from being called more than one (need to track consumed on it, so if already consumed disallow)
@@ -51,16 +51,16 @@ impl<R: Read + Seek> Iterator for RiffParser<R> {
 
 #[derive(Debug)]
 pub struct RiffChunk {
-    riff_type: ChunkType,
+    chunk_type: ChunkType,
 }
 
 impl RiffChunk {
-    fn new(riff_type: ChunkType) -> Self {
-        Self { riff_type }
+    fn new(chunk_type: ChunkType) -> Self {
+        Self { chunk_type }
     }
 
     fn data_size(&self) -> u32 {
-        match self.riff_type {
+        match self.chunk_type {
             ChunkType::Chunk(chunk) => chunk.size,
             // list_id is counted in size, but we already read it. So subtract from size.
             ChunkType::List(list) | ChunkType::Riff(list) => list.size - 4,
