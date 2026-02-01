@@ -18,59 +18,59 @@ impl<R: Read + Seek> RiffParser<R> {
         }
     }
 
-    pub fn skip_item(&mut self, item: &mut RiffItem) -> BinResult<()> {
-        item.skip(&mut *self.reader.borrow_mut())
+    pub fn skip_chunk(&mut self, chunk: &mut RiffChunk) -> BinResult<()> {
+        chunk.skip(&mut *self.reader.borrow_mut())
     }
 
-    pub fn read_item_vec(&mut self, item: &mut RiffItem) -> BinResult<Vec<u8>> {
-        item.read_vec(&mut *self.reader.borrow_mut())
+    pub fn read_chunk_vec(&mut self, chunk: &mut RiffChunk) -> BinResult<Vec<u8>> {
+        chunk.read_vec(&mut *self.reader.borrow_mut())
     }
 
-    pub fn read_item(&mut self, item: &mut RiffItem, buffer: &mut [u8]) -> BinResult<()> {
-        item.read(&mut *self.reader.borrow_mut(), buffer)
+    pub fn read_chunk(&mut self, chunk: &mut RiffChunk, buffer: &mut [u8]) -> BinResult<()> {
+        chunk.read(&mut *self.reader.borrow_mut(), buffer)
     }
 }
 
 impl<R: Read + Seek> Iterator for RiffParser<R> {
-    type Item = BinResult<RiffItem>;
+    type Item = BinResult<RiffChunk>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let riff_type = match RiffType::read(&mut *self.reader.borrow_mut()) {
+        let riff_type = match ChunkType::read(&mut *self.reader.borrow_mut()) {
             Ok(riff_type) => riff_type,
             Err(e) => return Some(Err(e)),
         };
-        Some(Ok(RiffItem::new(riff_type)))
+        Some(Ok(RiffChunk::new(riff_type)))
 
         //XXX need a stack of riff_type, and keep track of amount read each time and pop when consumed
         //XXX Seek::stream_position
         // caller may want the stack too so it knows where it is - api to fetch immutable view on stack
-        // also need to prevent RiffItem::skip/read from being called more than one (need to track consumed on it, so if already consumed disallow)
-        // track consumed in RiffItem, make iter return &mut RiffItem (and keep on stack) - so read/skip updates that instance
+        // also need to prevent RiffChunk::skip/read from being called more than one (need to track consumed on it, so if already consumed disallow)
+        // track consumed in RiffChunk, make iter return &mut RiffChunk (and keep on stack) - so read/skip updates that instance
     }
 }
 
 #[derive(Debug)]
-pub struct RiffItem {
-    riff_type: RiffType,
+pub struct RiffChunk {
+    riff_type: ChunkType,
 }
 
-impl RiffItem {
-    fn new(riff_type: RiffType) -> Self {
+impl RiffChunk {
+    fn new(riff_type: ChunkType) -> Self {
         Self { riff_type }
     }
 
     fn data_size(&self) -> u32 {
         match self.riff_type {
-            RiffType::Chunk(chunk) => chunk.size,
+            ChunkType::Chunk(chunk) => chunk.size,
             // list_id is counted in size, but we already read it. So subtract from size.
-            RiffType::List(list) | RiffType::Riff(list) => list.size - 4,
+            ChunkType::List(list) | ChunkType::Riff(list) => list.size - 4,
         }
     }
 }
 
 #[derive(BinRead, Debug, Copy, Clone)]
 #[br(little)]
-pub enum RiffType {
+pub enum ChunkType {
     #[br(magic = b"RIFF")]
     Riff(List),
     #[br(magic = b"LIST")]
@@ -90,7 +90,7 @@ pub struct List {
     list_id: FourCC,
 }
 
-impl RiffItem {
+impl RiffChunk {
     fn skip<R: Read + Seek>(&mut self, reader: &mut R) -> BinResult<()> {
         let mut size = self.data_size();
         // Include padding byte
@@ -142,7 +142,7 @@ mod tests {
         dbg!(&riff);
         let mut hdr = parser.next().unwrap().unwrap();
         dbg!(&hdr);
-        parser.skip_item(&mut hdr).unwrap();
+        parser.skip_chunk(&mut hdr).unwrap();
         let chunk = parser.next().unwrap().unwrap();
         dbg!(&chunk);
     }
