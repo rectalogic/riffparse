@@ -1,7 +1,7 @@
 use alloc::rc::Rc;
 use binrw::{
     BinRead, BinResult,
-    io::{Read, Result, Seek},
+    io::{Read, Seek},
 };
 use core::{cell::RefCell, fmt::Debug, iter::Iterator};
 
@@ -52,10 +52,11 @@ impl<R: Read + Seek> RiffItem<R> {
         Self { reader, riff_type }
     }
 
-    fn chunk(&self) -> Chunk {
+    fn data_size(&self) -> u32 {
         match self.riff_type {
-            RiffType::Chunk(chunk) => chunk,
-            RiffType::List(list) | RiffType::Riff(list) => list.chunk,
+            RiffType::Chunk(chunk) => chunk.size,
+            // Subtract the size of list_id
+            RiffType::List(list) | RiffType::Riff(list) => list.size - 4,
         }
     }
 }
@@ -78,31 +79,43 @@ pub struct Chunk {
 
 #[derive(BinRead, Debug, Copy, Clone)]
 pub struct List {
-    chunk: Chunk,
+    size: u32,
     list_id: FourCC,
 }
 
 impl<R: Read + Seek> RiffItem<R> {
-    pub fn skip(&mut self) -> Result<()> {
-        let chunk = self.chunk();
+    pub fn skip(&mut self) -> BinResult<()> {
+        let mut size = self.data_size();
         // Include padding byte
-        let size = if !chunk.size.is_multiple_of(2) {
-            chunk.size + 1
-        } else {
-            chunk.size
+        if !size.is_multiple_of(2) {
+            size += 1;
         };
-        self.reader.borrow_mut().seek_relative(size as i64)
+        self.reader
+            .borrow_mut()
+            .seek_relative(size as i64)
+            .map_err(binrw::Error::Io)
     }
 
-    pub fn read(&mut self, buffer: &mut [u8]) -> Result<()> {
-        let chunk = self.chunk();
-        if buffer.len() != chunk.size as usize {
-            //XXX return error
+    pub fn read_vec(&mut self) -> BinResult<Vec<u8>> {
+        let mut buffer = vec![0u8; self.data_size() as usize];
+        self.read(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    pub fn read(&mut self, buffer: &mut [u8]) -> BinResult<()> {
+        let mut reader = self.reader.borrow_mut();
+        let size = self.data_size();
+        if buffer.len() != size as usize {
+            let pos = reader.stream_position().unwrap_or(0);
+            return Err(binrw::Error::AssertFail {
+                pos,
+                message: "read buffer too small".into(),
+            });
         }
-        self.reader.borrow_mut().read_exact(buffer)?;
+        reader.read_exact(buffer).map_err(binrw::Error::Io)?;
         // Skip padding byte
-        if !chunk.size.is_multiple_of(2) {
-            self.reader.borrow_mut().read_exact(&mut [0u8; 1])?;
+        if !size.is_multiple_of(2) {
+            reader.read_exact(&mut [0u8; 1]).map_err(binrw::Error::Io)?;
         }
         Ok(())
     }
@@ -121,8 +134,13 @@ mod tests {
         )
         .unwrap();
         let mut parser = RiffParser::new(file);
-        //XXX magic is not read into struct, need to remove it
-        let riff = parser.next();
+
+        let riff = parser.next().unwrap().unwrap();
         dbg!(&riff);
+        let mut hdr = parser.next().unwrap().unwrap();
+        dbg!(&hdr);
+        hdr.skip().unwrap();
+        let chunk = parser.next().unwrap().unwrap();
+        dbg!(&chunk);
     }
 }
