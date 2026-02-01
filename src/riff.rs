@@ -1,9 +1,9 @@
 use alloc::rc::Rc;
 use binrw::{
-    BinRead,
+    BinRead, BinResult,
     io::{Read, Result, Seek},
 };
-use core::{cell::RefCell, iter::Iterator};
+use core::{cell::RefCell, fmt::Debug, iter::Iterator};
 
 use crate::fourcc::FourCC;
 
@@ -20,21 +20,31 @@ impl<R: Read + Seek> RiffParser<R> {
 }
 
 impl<R: Read + Seek> Iterator for RiffParser<R> {
-    type Item = Result<RiffItem<R>>;
+    type Item = BinResult<RiffItem<R>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let fourcc = FourCC::read(&mut *self.reader.borrow_mut());
-        //RiffItem::new(Rc::clone(&self.reader));
-        None
-        // track consumed in Chunk - skip/read update it and incrementally update as we iter List - propagate updates from sublists - so List knows when iteration is finished
-        // but we will have multiple refs to reader - parent List immutable, sublist mutable
-        // can we do flat iter? return List, it can be skipped, if not we iterate it's children etc. - caller can set flag to skip, or read (which effectively skips if List) otherwise we go into?
+        let riff_type = match RiffType::read(&mut *self.reader.borrow_mut()) {
+            Ok(riff_type) => riff_type,
+            Err(e) => return Some(Err(e)),
+        };
+        Some(Ok(RiffItem::new(Rc::clone(&self.reader), riff_type)))
+
+        //XXX need a stack of riff_type, and keep track of amount read each time and pop when consumed
+        //XXX Seek::stream_position
     }
 }
 
 pub struct RiffItem<R: Read + Seek> {
     reader: Rc<RefCell<R>>,
     riff_type: RiffType,
+}
+
+impl<R: Read + Seek> Debug for RiffItem<R> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RiffItem")
+            .field("riff_type", &self.riff_type)
+            .finish()
+    }
 }
 
 impl<R: Read + Seek> RiffItem<R> {
@@ -45,13 +55,16 @@ impl<R: Read + Seek> RiffItem<R> {
     fn chunk(&self) -> Chunk {
         match self.riff_type {
             RiffType::Chunk(chunk) => chunk,
-            RiffType::List(list) => list.chunk,
+            RiffType::List(list) | RiffType::Riff(list) => list.chunk,
         }
     }
 }
 
 #[derive(BinRead, Debug, Copy, Clone)]
+#[br(little)]
 pub enum RiffType {
+    #[br(magic = b"RIFF")]
+    Riff(List),
     #[br(magic = b"LIST")]
     List(List),
     Chunk(Chunk),
@@ -60,7 +73,6 @@ pub enum RiffType {
 #[derive(BinRead, Debug, Copy, Clone)]
 pub struct Chunk {
     chunk_id: FourCC,
-    #[br(little)]
     size: u32,
 }
 
@@ -93,5 +105,24 @@ impl<R: Read + Seek> RiffItem<R> {
             self.reader.borrow_mut().read_exact(&mut [0u8; 1])?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+
+    use super::*;
+
+    #[test]
+    fn test_avi() {
+        let file = File::open(
+            "/Users/aw/Projects/rectalogic/experiments/vendor/esp32-tv/player/milk2.avi",
+        )
+        .unwrap();
+        let mut parser = RiffParser::new(file);
+        //XXX magic is not read into struct, need to remove it
+        let riff = parser.next();
+        dbg!(&riff);
     }
 }

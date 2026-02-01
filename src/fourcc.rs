@@ -1,4 +1,4 @@
-use core::ops::Deref;
+use core::{fmt::Debug, ops::Deref};
 
 use binrw::BinRead;
 
@@ -8,13 +8,23 @@ pub mod tag {
     pub const LIST: FourCC = FourCC::new(*b"LIST");
 }
 
-#[derive(BinRead, Debug, Copy, Clone, Eq, PartialEq)]
-#[br(little)]
+#[derive(BinRead, Copy, Clone, Eq, PartialEq)]
 pub struct FourCC(u32);
 
 impl FourCC {
     pub const fn new(bytes: [u8; 4]) -> Self {
         Self(u32::from_le_bytes(bytes))
+    }
+}
+
+impl Debug for FourCC {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let bytes = self.0.to_le_bytes();
+        if let Ok(s) = str::from_utf8(&bytes) {
+            write!(f, "FourCC({s})")
+        } else {
+            write!(f, "FourCC({bytes:?})")
+        }
     }
 }
 
