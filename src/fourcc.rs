@@ -15,11 +15,15 @@ impl Fourcc {
     pub const fn new(bytes: [u8; 4]) -> Self {
         Self(u32::from_le_bytes(bytes))
     }
+
+    pub fn bytes(&self) -> [u8; 4] {
+        self.0.to_le_bytes()
+    }
 }
 
 impl Debug for Fourcc {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let bytes = self.0.to_le_bytes();
+        let bytes = self.bytes();
         if let Ok(s) = str::from_utf8(&bytes) {
             write!(f, "Fourcc({s})")
         } else {
