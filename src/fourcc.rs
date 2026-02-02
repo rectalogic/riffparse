@@ -3,32 +3,32 @@ use core::{fmt::Debug, ops::Deref};
 use binrw::BinRead;
 
 pub mod tag {
-    use super::FourCC;
-    pub const RIFF: FourCC = FourCC::new(*b"RIFF");
-    pub const LIST: FourCC = FourCC::new(*b"LIST");
+    use super::Fourcc;
+    pub const RIFF: Fourcc = Fourcc::new(*b"RIFF");
+    pub const LIST: Fourcc = Fourcc::new(*b"LIST");
 }
 
 #[derive(BinRead, Copy, Clone, Eq, PartialEq)]
-pub struct FourCC(u32);
+pub struct Fourcc(u32);
 
-impl FourCC {
+impl Fourcc {
     pub const fn new(bytes: [u8; 4]) -> Self {
         Self(u32::from_le_bytes(bytes))
     }
 }
 
-impl Debug for FourCC {
+impl Debug for Fourcc {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let bytes = self.0.to_le_bytes();
         if let Ok(s) = str::from_utf8(&bytes) {
-            write!(f, "FourCC({s})")
+            write!(f, "Fourcc({s})")
         } else {
-            write!(f, "FourCC({bytes:?})")
+            write!(f, "Fourcc({bytes:?})")
         }
     }
 }
 
-impl Deref for FourCC {
+impl Deref for Fourcc {
     type Target = u32;
 
     fn deref(&self) -> &Self::Target {
@@ -36,7 +36,7 @@ impl Deref for FourCC {
     }
 }
 
-impl From<[u8; 4]> for FourCC {
+impl From<[u8; 4]> for Fourcc {
     fn from(bytes: [u8; 4]) -> Self {
         Self::new(bytes)
     }

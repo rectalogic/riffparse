@@ -4,7 +4,7 @@ use binrw::{
 };
 use core::{fmt::Debug, iter::Iterator};
 
-use crate::fourcc::FourCC;
+use crate::fourcc::Fourcc;
 
 pub struct RiffParser<R> {
     reader: R,
@@ -32,11 +32,16 @@ impl<R: Read + Seek> Iterator for RiffParser<R> {
     type Item = BinResult<RiffChunk>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        let pos = match self.reader.stream_position() {
+            Ok(pos) => pos as usize,
+            Err(e) => return Some(Err(binrw::Error::Io(e))),
+        };
+        let token = ChunkToken(pos);
         let chunk_type = match ChunkType::read(&mut self.reader) {
             Ok(chunk_type) => chunk_type,
             Err(e) => return Some(Err(e)),
         };
-        Some(Ok(RiffChunk::new(chunk_type)))
+        Some(Ok(RiffChunk::new(token, chunk_type)))
 
         //XXX need a stack of chunk_type, and keep track of amount read each time and pop when consumed
         //XXX Seek::stream_position
@@ -48,22 +53,18 @@ impl<R: Read + Seek> Iterator for RiffParser<R> {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct ChunkToken(usize);
+
 #[derive(Debug)]
 pub struct RiffChunk {
+    token: ChunkToken,
     chunk_type: ChunkType,
 }
 
 impl RiffChunk {
-    fn new(chunk_type: ChunkType) -> Self {
-        Self { chunk_type }
-    }
-
-    fn data_size(&self) -> u32 {
-        match self.chunk_type {
-            ChunkType::Chunk(chunk) => chunk.size,
-            // list_id is counted in size, but we already read it. So subtract from size.
-            ChunkType::List(list) | ChunkType::Riff(list) => list.size - 4,
-        }
+    fn new(token: ChunkToken, chunk_type: ChunkType) -> Self {
+        Self { token, chunk_type }
     }
 }
 
@@ -77,22 +78,32 @@ pub enum ChunkType {
     Chunk(Chunk),
 }
 
+impl ChunkType {
+    pub fn data_size(&self) -> usize {
+        match self {
+            ChunkType::Chunk(chunk) => chunk.size as usize,
+            // list_id is counted in size, but we already read it. So subtract from size.
+            ChunkType::List(list) | ChunkType::Riff(list) => list.size as usize - 4,
+        }
+    }
+}
+
 #[derive(BinRead, Debug, Copy, Clone)]
 pub struct Chunk {
-    chunk_id: FourCC,
+    chunk_id: Fourcc,
     size: u32,
 }
 
 #[derive(BinRead, Debug, Copy, Clone)]
 pub struct List {
     size: u32,
-    list_id: FourCC,
+    list_id: Fourcc,
 }
 
 impl RiffChunk {
     fn skip<R: Read + Seek>(&mut self, reader: &mut R) -> BinResult<()> {
-        let mut size = self.data_size();
-        // Include padding byte
+        let mut size = self.chunk_type.data_size();
+        // Skip padding byte
         if !size.is_multiple_of(2) {
             size += 1;
         };
@@ -100,14 +111,14 @@ impl RiffChunk {
     }
 
     fn read_vec<R: Read + Seek>(&mut self, reader: &mut R) -> BinResult<Vec<u8>> {
-        let mut buffer = vec![0u8; self.data_size() as usize];
+        let mut buffer = vec![0u8; self.chunk_type.data_size()];
         self.read(reader, &mut buffer)?;
         Ok(buffer)
     }
 
     fn read<R: Read + Seek>(&mut self, reader: &mut R, buffer: &mut [u8]) -> BinResult<()> {
-        let size = self.data_size();
-        if buffer.len() != size as usize {
+        let size = self.chunk_type.data_size();
+        if buffer.len() != size {
             let pos = reader.stream_position().unwrap_or(0);
             return Err(binrw::Error::AssertFail {
                 pos,
