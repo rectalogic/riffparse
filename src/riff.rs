@@ -1,8 +1,8 @@
 use binrw::{
     BinRead, BinResult,
-    io::{Read, Seek},
+    io::{Error as IoError, ErrorKind, Read, Seek},
 };
-use core::{fmt::Debug, iter::Iterator};
+use core::{fmt::Debug, iter::Iterator, mem::size_of};
 
 use crate::fourcc::Fourcc;
 
@@ -12,41 +12,107 @@ pub struct RiffParser<R> {
 }
 
 impl<R: Read + Seek> RiffParser<R> {
-    pub fn new(reader: R) -> Self {
-        Self {
+    pub fn new(mut reader: R) -> BinResult<Self> {
+        let riff = match ChunkType::read(&mut reader) {
+            Ok(ChunkType::Riff(riff)) => ChunkType::Riff(riff),
+            Ok(_) => {
+                return Err(binrw::error::Error::Custom {
+                    pos: 0,
+                    err: Box::new("invalid RIFF file"),
+                });
+            }
+            Err(e) => return Err(e),
+        };
+        let mut chunk_stack = Vec::with_capacity(4);
+        chunk_stack.push(RiffChunk::new(riff));
+        Ok(Self {
             reader,
-            chunk_stack: Vec::with_capacity(4),
+            chunk_stack,
+        })
+    }
+
+    pub fn skip_chunk(&mut self) -> BinResult<()> {
+        let mut chunk = self.current_chunk()?;
+        chunk.chunk_type.skip_data(&mut self.reader)?;
+        self.consume_current(&mut chunk);
+        Ok(())
+    }
+
+    pub fn read_chunk_vec(&mut self) -> BinResult<Vec<u8>> {
+        let mut chunk = self.current_chunk()?;
+        let data = chunk.chunk_type.read_data_vec(&mut self.reader)?;
+        self.consume_current(&mut chunk);
+        Ok(data)
+    }
+
+    pub fn read_chunk(&mut self, buffer: &mut [u8]) -> BinResult<()> {
+        let mut chunk = self.current_chunk()?;
+        chunk.chunk_type.read_data(&mut self.reader, buffer)?;
+        self.consume_current(&mut chunk);
+        Ok(())
+    }
+
+    fn consume_current(&mut self, chunk: &mut RiffChunk) {
+        chunk.consume_all();
+        if let Some(current_chunk) = self.chunk_stack.last_mut() {
+            *current_chunk = *chunk;
         }
     }
 
-    pub fn skip_chunk(&mut self, chunk: &mut RiffChunk) -> BinResult<()> {
-        chunk.chunk_type.skip_data(&mut self.reader)
-    }
-
-    pub fn read_chunk_vec(&mut self, chunk: &mut RiffChunk) -> BinResult<Vec<u8>> {
-        chunk.chunk_type.read_data_vec(&mut self.reader)
-    }
-
-    pub fn read_chunk(&mut self, chunk: &mut RiffChunk, buffer: &mut [u8]) -> BinResult<()> {
-        chunk.chunk_type.read_data(&mut self.reader, buffer)
+    fn current_chunk(&self) -> BinResult<RiffChunk> {
+        self.chunk_stack.last().copied().ok_or_else(|| {
+            binrw::Error::Io(IoError::new(ErrorKind::UnexpectedEof, "no more chunks"))
+        })
     }
 }
 
 impl<R: Read + Seek> Iterator for RiffParser<R> {
-    type Item = BinResult<RiffChunk>;
+    type Item = BinResult<ChunkType>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let pos = match self.reader.stream_position() {
-            Ok(pos) => pos as usize,
-            Err(e) => return Some(Err(binrw::Error::Io(e))),
-        };
-        let token = ChunkToken(pos);
+        let mut current_chunk = self.chunk_stack.last()?;
+
+        if let ChunkType::Chunk(chunk) = current_chunk.chunk_type {
+            if !current_chunk.is_consumed() {
+                current_chunk.chunk_type.skip_data(&mut self.reader)?;
+            }
+            self.chunk_stack.pop();
+            // Add the chunk size to the parent list consumed size
+            let consumed = current_chunk.chunk_type.chunk_size();
+            current_chunk = self.chunk_stack.last()?;
+            current_chunk.consume(consumed);
+        }
+
+        //XXX now current_chunk must be List/Riff - check if consumed
+        //
+
+        // first, if chunk consume if needed, pop either way - record chunk_size
+        // then, last() must be List, consume(chunk_size) (may be zero)
+        //    if list now consumed, pop and record chunk_size - do this in a loop until we find unconsumed list
+        // read next chunk and return it
+        match current_chunk.chunk_type {
+            ChunkType::Riff(list) | ChunkType::List(list) => {
+                if current_chunk.is_consumed() {
+                    self.chunk_stack.pop();
+                }
+            }
+            ChunkType::Chunk(chunk) => {
+                if !current_chunk.is_consumed() {
+                    current_chunk.chunk_type.skip_data(&mut self.reader)?;
+                    self.chunk_stack.pop();
+                }
+            }
+        }
+
+        //XXX check stack, if Chunk then skip if not consumed, and pop - add size to parent list consumed
+        // if stack now empty, read and push
+        // if stack has Riff/List check if consumed - need to track bytes
         let chunk_type = match ChunkType::read(&mut self.reader) {
             Ok(chunk_type) => chunk_type,
             Err(e) => return Some(Err(e)),
         };
-        Some(Ok(RiffChunk::new(token, chunk_type)))
 
+        Some(Ok(chunk_type))
         //XXX need a stack of chunk_type, and keep track of amount read each time and pop when consumed
         //XXX Seek::stream_position
         // caller may want the stack too so it knows where it is - api to fetch immutable view on stack
@@ -57,18 +123,30 @@ impl<R: Read + Seek> Iterator for RiffParser<R> {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct ChunkToken(usize);
-
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct RiffChunk {
-    token: ChunkToken,
+    consumed: usize,
     chunk_type: ChunkType,
 }
 
 impl RiffChunk {
-    fn new(token: ChunkToken, chunk_type: ChunkType) -> Self {
-        Self { token, chunk_type }
+    fn new(chunk_type: ChunkType) -> Self {
+        Self {
+            consumed: 0,
+            chunk_type,
+        }
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.consumed += amount;
+    }
+
+    fn consume_all(&mut self) {
+        self.consume(self.chunk_type.chunk_size());
+    }
+
+    fn is_consumed(&self) -> bool {
+        self.consumed == self.chunk_type.chunk_size()
     }
 }
 
@@ -88,6 +166,18 @@ impl ChunkType {
             ChunkType::Chunk(chunk) => chunk.chunk_id,
             ChunkType::List(list) | ChunkType::Riff(list) => list.list_id,
         }
+    }
+
+    fn chunk_size(&self) -> usize {
+        let mut data_size = self.data_size();
+        if !data_size.is_multiple_of(2) {
+            data_size += 1;
+        };
+        data_size
+            + match self {
+                ChunkType::Riff(_) | ChunkType::List(_) => size_of::<Fourcc>() + size_of::<List>(),
+                ChunkType::Chunk(_) => size_of::<Chunk>(),
+            }
     }
 
     pub fn data_size(&self) -> usize {
