@@ -88,19 +88,23 @@ impl<R> Debug for Metadata<R> {
     }
 }
 
+fn data_pad(size: u32) -> u32 {
+    if size.is_multiple_of(2) { 0 } else { 1 }
+}
+
 trait ChunkData<R: Read + Seek> {
     fn metadata(&mut self) -> &mut Metadata<R>;
 
     fn data_size(&self) -> u32;
 
+    fn data_pad(&self) -> u32 {
+        data_pad(self.data_size())
+    }
+
     fn skip_data(&mut self) -> BinResult<()> {
-        let data_size = self.data_size();
+        let data_size = self.data_size() + self.data_pad();
         let metadata = self.metadata();
-        let mut data_end = metadata.data_start + data_size as u64;
-        // Skip padding byte
-        if !data_size.is_multiple_of(2) {
-            data_end += 1;
-        };
+        let data_end = metadata.data_start + data_size as u64;
         metadata
             .reader
             .borrow_mut()
@@ -126,6 +130,7 @@ trait ChunkData<R: Read + Seek> {
 
     fn read_data(&mut self, buffer: &mut [u8]) -> BinResult<()> {
         let data_size = self.data_size();
+        let data_pad = self.data_pad();
         let metadata = self.metadata();
         let mut reader = metadata.reader.borrow_mut();
         if buffer.len() != data_size as usize {
@@ -137,7 +142,7 @@ trait ChunkData<R: Read + Seek> {
         }
         reader.read_exact(buffer).map_err(BinError::Io)?;
         // Skip padding byte
-        if !data_size.is_multiple_of(2) {
+        if data_pad == 1 {
             reader.read_exact(&mut [0u8; 1]).map_err(BinError::Io)?;
         }
         Ok(())
@@ -195,7 +200,10 @@ impl<R: Read + Seek> List<R> {
                 let data_start = reader.stream_position().map_err(BinError::Io)?;
                 match header {
                     Header::List(list_header) => {
-                        self.next_position = data_start + list_header.size as u64;
+                        // list_id fourcc is part of the data size, so subtract it since we already read it
+                        self.next_position = data_start
+                            + (list_header.size + data_pad(list_header.size)) as u64
+                            - size_of::<Fourcc>() as u64;
                         Ok(ChunkType::List(List::new(
                             list_header,
                             Rc::clone(&self.metadata.reader),
@@ -203,7 +211,8 @@ impl<R: Read + Seek> List<R> {
                         )))
                     }
                     Header::Chunk(chunk_header) => {
-                        self.next_position = data_start + chunk_header.size as u64;
+                        self.next_position =
+                            data_start + (chunk_header.size + data_pad(chunk_header.size)) as u64;
                         Ok(ChunkType::Chunk(Chunk::new(
                             chunk_header,
                             Rc::clone(&self.metadata.reader),
@@ -235,7 +244,10 @@ impl<R: Read + Seek> Iterator for List<R> {
     type Item = BinResult<ChunkType<R>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.next_position >= self.metadata.data_start + self.header.size as u64 {
+        if self.next_position
+            >= self.metadata.data_start + (self.header.size + self.data_pad()) as u64
+                - size_of::<Fourcc>() as u64
+        {
             None
         } else {
             Some(self.read_next())
@@ -262,9 +274,9 @@ mod tests {
                 let chunk = chunk?;
                 match chunk {
                     ChunkType::List(mut list) => {
+                        dbg!(&list);
                         list.try_for_each(|subchunk| -> Result<(), BinError> {
                             let subchunk = subchunk?;
-                            dbg!(&subchunk);
                             match subchunk {
                                 ChunkType::List(sublist) => {
                                     dbg!(sublist);
