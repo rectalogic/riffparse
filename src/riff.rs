@@ -1,10 +1,10 @@
 use alloc::rc::Rc;
 use binrw::{
     BinRead, BinResult, Error as BinError,
-    io::{Error as IoError, ErrorKind, Read, Seek, SeekFrom},
+    io::{Read, Seek, SeekFrom},
     meta::ReadEndian,
 };
-use core::{cell::RefCell, fmt::Debug, iter::Iterator, mem::size_of, ops::Range};
+use core::{cell::RefCell, fmt::Debug, iter::Iterator, mem::size_of};
 
 use crate::fourcc::Fourcc;
 
@@ -69,7 +69,7 @@ enum Header {
 }
 
 #[derive(Clone)]
-struct Metadata<R> {
+pub struct Metadata<R> {
     reader: Rc<RefCell<R>>,
     data_start: u64,
 }
@@ -88,19 +88,25 @@ impl<R> Debug for Metadata<R> {
     }
 }
 
-trait ChunkData<R: Read + Seek> {
-    fn metadata(&mut self) -> &mut Metadata<R>;
+mod private {
+    use super::*;
+    pub trait ChunkData<R: Read + Seek> {
+        fn metadata(&mut self) -> &mut Metadata<R>;
 
-    fn data_size(&self) -> u32;
+        fn data_size(&self) -> u32;
 
-    fn data_pad(&self) -> u32 {
-        if self.data_size().is_multiple_of(2) {
-            0
-        } else {
-            1
+        fn data_pad(&self) -> u32 {
+            if self.data_size().is_multiple_of(2) {
+                0
+            } else {
+                1
+            }
         }
     }
+}
+use private::ChunkData;
 
+pub trait ChunkRead<R: Read + Seek>: ChunkData<R> {
     fn read_data_struct<S>(&mut self) -> BinResult<S>
     where
         S: BinRead + ReadEndian + Sized,
@@ -150,6 +156,10 @@ impl<R: Read + Seek> Chunk<R> {
             metadata: Metadata::new(reader, data_start),
         }
     }
+
+    pub fn id(&self) -> Fourcc {
+        self.header.chunk_id
+    }
 }
 
 impl<R: Read + Seek> ChunkData<R> for Chunk<R> {
@@ -161,6 +171,8 @@ impl<R: Read + Seek> ChunkData<R> for Chunk<R> {
         self.header.size
     }
 }
+
+impl<R: Read + Seek> ChunkRead<R> for Chunk<R> {}
 
 #[derive(Debug)]
 pub struct List<R> {
@@ -176,6 +188,10 @@ impl<R: Read + Seek> List<R> {
             metadata: Metadata::new(reader, data_start),
             next_position: data_start,
         }
+    }
+
+    pub fn id(&self) -> Fourcc {
+        self.header.list_id
     }
 
     fn read_next(&mut self) -> BinResult<ChunkType<R>> {
@@ -223,6 +239,8 @@ impl<R: Read + Seek> ChunkData<R> for List<R> {
         self.header.size
     }
 }
+
+impl<R: Read + Seek> ChunkRead<R> for List<R> {}
 
 impl<R: Read + Seek> Iterator for List<R> {
     type Item = BinResult<ChunkType<R>>;

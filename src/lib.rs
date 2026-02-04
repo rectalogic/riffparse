@@ -3,4 +3,5 @@
 extern crate alloc;
 
 pub mod fourcc;
-pub mod riff;
+mod riff;
+pub use riff::{Chunk, ChunkRead, ChunkType, List, RiffParser};
