@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+pub mod avi;
 pub mod fourcc;
 mod riff;
 pub use binrw::{
