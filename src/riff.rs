@@ -202,7 +202,8 @@ impl<R: Read + Seek> ChunkData<R> for List<R> {
     }
 
     fn data_size(&self) -> u32 {
-        self.header.size
+        // The list_id is part of the data, but we read it as part of the header
+        self.header.size - size_of::<Fourcc>() as u32
     }
 }
 
@@ -236,10 +237,8 @@ impl<'a, R: Read + Seek> ListIter<'a, R> {
                             Rc::clone(&self.list.metadata.reader),
                             data_start,
                         );
-                        // list_id fourcc is part of the data size, so subtract it since we already read it
-                        self.next_position = data_start
-                            + (list_header.size + list.data_pad()) as u64
-                            - size_of::<Fourcc>() as u64;
+                        self.next_position =
+                            data_start + (list.data_size() + list.data_pad()) as u64;
                         Ok(ChunkType::List(list))
                     }
                     Header::Chunk(chunk_header) => {
@@ -249,7 +248,7 @@ impl<'a, R: Read + Seek> ListIter<'a, R> {
                             data_start,
                         );
                         self.next_position =
-                            data_start + (chunk_header.size + chunk.data_pad()) as u64;
+                            data_start + (chunk.data_size() + chunk.data_pad()) as u64;
                         Ok(ChunkType::Chunk(chunk))
                     }
                     Header::Riff(_) => Err(BinError::Custom {
@@ -268,7 +267,7 @@ impl<'a, R: Read + Seek> Iterator for ListIter<'a, R> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.next_position
-            >= self.list.metadata.data_start + (self.list.header.size + self.list.data_pad()) as u64
+            >= self.list.metadata.data_start + (self.list.data_size() + self.list.data_pad()) as u64
                 - size_of::<Fourcc>() as u64
         {
             None
