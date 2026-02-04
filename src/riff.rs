@@ -68,7 +68,6 @@ enum Header {
     Chunk(ChunkHeader),
 }
 
-#[derive(Clone)]
 pub struct Metadata<R> {
     reader: Rc<RefCell<R>>,
     data_start: u64,
@@ -77,6 +76,15 @@ pub struct Metadata<R> {
 impl<R> Metadata<R> {
     fn new(reader: Rc<RefCell<R>>, data_start: u64) -> Self {
         Self { reader, data_start }
+    }
+}
+
+impl<R> Clone for Metadata<R> {
+    fn clone(&self) -> Self {
+        Self {
+            reader: Rc::clone(&self.reader),
+            data_start: self.data_start,
+        }
     }
 }
 
@@ -143,7 +151,7 @@ pub trait ChunkRead<R: Read + Seek>: ChunkData<R> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Chunk<R> {
     header: ChunkHeader,
     metadata: Metadata<R>,
@@ -178,7 +186,6 @@ impl<R: Read + Seek> ChunkRead<R> for Chunk<R> {}
 pub struct List<R> {
     header: ListHeader,
     metadata: Metadata<R>,
-    next_position: u64,
 }
 
 impl<R: Read + Seek> List<R> {
@@ -186,7 +193,6 @@ impl<R: Read + Seek> List<R> {
         Self {
             header,
             metadata: Metadata::new(reader, data_start),
-            next_position: data_start,
         }
     }
 
@@ -194,38 +200,16 @@ impl<R: Read + Seek> List<R> {
         self.header.list_id
     }
 
-    fn read_next(&mut self) -> BinResult<ChunkType<R>> {
-        let mut reader = self.metadata.reader.borrow_mut();
-        reader
-            .seek(SeekFrom::Start(self.next_position))
-            .map_err(BinError::Io)?;
-        match Header::read(&mut *reader) {
-            Ok(header) => {
-                let data_start = reader.stream_position().map_err(BinError::Io)?;
-                match header {
-                    Header::List(list_header) => {
-                        let list =
-                            List::new(list_header, Rc::clone(&self.metadata.reader), data_start);
-                        // list_id fourcc is part of the data size, so subtract it since we already read it
-                        self.next_position = data_start
-                            + (list_header.size + list.data_pad()) as u64
-                            - size_of::<Fourcc>() as u64;
-                        Ok(ChunkType::List(list))
-                    }
-                    Header::Chunk(chunk_header) => {
-                        let chunk =
-                            Chunk::new(chunk_header, Rc::clone(&self.metadata.reader), data_start);
-                        self.next_position =
-                            data_start + (chunk_header.size + chunk.data_pad()) as u64;
-                        Ok(ChunkType::Chunk(chunk))
-                    }
-                    Header::Riff(_) => Err(BinError::Custom {
-                        pos: data_start,
-                        err: Box::new("malformed RIFF file"),
-                    }),
-                }
-            }
-            Err(e) => Err(e),
+    pub fn iter(&self) -> ListIter<R> {
+        ListIter::new(self.clone())
+    }
+}
+
+impl<R> Clone for List<R> {
+    fn clone(&self) -> Self {
+        Self {
+            header: self.header,
+            metadata: self.metadata.clone(),
         }
     }
 }
@@ -242,12 +226,67 @@ impl<R: Read + Seek> ChunkData<R> for List<R> {
 
 impl<R: Read + Seek> ChunkRead<R> for List<R> {}
 
-impl<R: Read + Seek> Iterator for List<R> {
+pub struct ListIter<R> {
+    list: List<R>,
+    next_position: u64,
+}
+
+impl<R: Read + Seek> ListIter<R> {
+    fn new(list: List<R>) -> Self {
+        Self {
+            next_position: list.metadata.data_start,
+            list,
+        }
+    }
+
+    fn read_next(&mut self) -> BinResult<ChunkType<R>> {
+        let mut reader = self.list.metadata.reader.borrow_mut();
+        reader
+            .seek(SeekFrom::Start(self.next_position))
+            .map_err(BinError::Io)?;
+        match Header::read(&mut *reader) {
+            Ok(header) => {
+                let data_start = reader.stream_position().map_err(BinError::Io)?;
+                match header {
+                    Header::List(list_header) => {
+                        let list = List::new(
+                            list_header,
+                            Rc::clone(&self.list.metadata.reader),
+                            data_start,
+                        );
+                        // list_id fourcc is part of the data size, so subtract it since we already read it
+                        self.next_position = data_start
+                            + (list_header.size + list.data_pad()) as u64
+                            - size_of::<Fourcc>() as u64;
+                        Ok(ChunkType::List(list))
+                    }
+                    Header::Chunk(chunk_header) => {
+                        let chunk = Chunk::new(
+                            chunk_header,
+                            Rc::clone(&self.list.metadata.reader),
+                            data_start,
+                        );
+                        self.next_position =
+                            data_start + (chunk_header.size + chunk.data_pad()) as u64;
+                        Ok(ChunkType::Chunk(chunk))
+                    }
+                    Header::Riff(_) => Err(BinError::Custom {
+                        pos: data_start,
+                        err: Box::new("malformed RIFF file"),
+                    }),
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+impl<R: Read + Seek> Iterator for ListIter<R> {
     type Item = BinResult<ChunkType<R>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.next_position
-            >= self.metadata.data_start + (self.header.size + self.data_pad()) as u64
+            >= self.list.metadata.data_start + (self.list.header.size + self.list.data_pad()) as u64
                 - size_of::<Fourcc>() as u64
         {
             None
@@ -270,33 +309,35 @@ mod tests {
         )
         .unwrap();
         let parser = RiffParser::new(file);
-        if let ChunkType::List(mut riff) = parser.riff().unwrap() {
+        if let ChunkType::List(riff) = parser.riff().unwrap() {
             dbg!(&riff);
-            riff.try_for_each(|chunk| -> Result<(), BinError> {
-                let chunk = chunk?;
-                match chunk {
-                    ChunkType::List(mut list) => {
-                        dbg!(&list);
-                        list.try_for_each(|subchunk| -> Result<(), BinError> {
-                            let subchunk = subchunk?;
-                            match subchunk {
-                                ChunkType::List(sublist) => {
-                                    dbg!(sublist);
-                                }
-                                ChunkType::Chunk(subsubchunk) => {
-                                    dbg!(subsubchunk);
-                                }
-                            };
-                            Ok(())
-                        })?;
-                    }
-                    ChunkType::Chunk(chunk) => {
-                        dbg!(chunk);
-                    }
-                };
-                Ok(())
-            })
-            .unwrap();
+            riff.iter()
+                .try_for_each(|chunk| -> Result<(), BinError> {
+                    let chunk = chunk?;
+                    match chunk {
+                        ChunkType::List(list) => {
+                            dbg!(&list);
+                            list.iter()
+                                .try_for_each(|subchunk| -> Result<(), BinError> {
+                                    let subchunk = subchunk?;
+                                    match subchunk {
+                                        ChunkType::List(sublist) => {
+                                            dbg!(sublist);
+                                        }
+                                        ChunkType::Chunk(subsubchunk) => {
+                                            dbg!(subsubchunk);
+                                        }
+                                    };
+                                    Ok(())
+                                })?;
+                        }
+                        ChunkType::Chunk(chunk) => {
+                            dbg!(chunk);
+                        }
+                    };
+                    Ok(())
+                })
+                .unwrap();
         };
     }
 }
