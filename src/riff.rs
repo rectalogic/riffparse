@@ -88,29 +88,17 @@ impl<R> Debug for Metadata<R> {
     }
 }
 
-fn data_pad(size: u32) -> u32 {
-    if size.is_multiple_of(2) { 0 } else { 1 }
-}
-
 trait ChunkData<R: Read + Seek> {
     fn metadata(&mut self) -> &mut Metadata<R>;
 
     fn data_size(&self) -> u32;
 
     fn data_pad(&self) -> u32 {
-        data_pad(self.data_size())
-    }
-
-    fn skip_data(&mut self) -> BinResult<()> {
-        let data_size = self.data_size() + self.data_pad();
-        let metadata = self.metadata();
-        let data_end = metadata.data_start + data_size as u64;
-        metadata
-            .reader
-            .borrow_mut()
-            .seek(SeekFrom::Start(data_end))
-            .map_err(BinError::Io)?;
-        Ok(())
+        if self.data_size().is_multiple_of(2) {
+            0
+        } else {
+            1
+        }
     }
 
     fn read_data_struct<S>(&mut self) -> BinResult<S>
@@ -200,24 +188,20 @@ impl<R: Read + Seek> List<R> {
                 let data_start = reader.stream_position().map_err(BinError::Io)?;
                 match header {
                     Header::List(list_header) => {
+                        let list =
+                            List::new(list_header, Rc::clone(&self.metadata.reader), data_start);
                         // list_id fourcc is part of the data size, so subtract it since we already read it
                         self.next_position = data_start
-                            + (list_header.size + data_pad(list_header.size)) as u64
+                            + (list_header.size + list.data_pad()) as u64
                             - size_of::<Fourcc>() as u64;
-                        Ok(ChunkType::List(List::new(
-                            list_header,
-                            Rc::clone(&self.metadata.reader),
-                            data_start,
-                        )))
+                        Ok(ChunkType::List(list))
                     }
                     Header::Chunk(chunk_header) => {
+                        let chunk =
+                            Chunk::new(chunk_header, Rc::clone(&self.metadata.reader), data_start);
                         self.next_position =
-                            data_start + (chunk_header.size + data_pad(chunk_header.size)) as u64;
-                        Ok(ChunkType::Chunk(Chunk::new(
-                            chunk_header,
-                            Rc::clone(&self.metadata.reader),
-                            data_start,
-                        )))
+                            data_start + (chunk_header.size + chunk.data_pad()) as u64;
+                        Ok(ChunkType::Chunk(chunk))
                     }
                     Header::Riff(_) => Err(BinError::Custom {
                         pos: data_start,
