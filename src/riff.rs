@@ -2,6 +2,7 @@ use alloc::rc::Rc;
 use binrw::{
     BinRead, BinResult, Error as BinError,
     io::{Error as IoError, ErrorKind, Read, Seek, SeekFrom},
+    meta::ReadEndian,
 };
 use core::{cell::RefCell, fmt::Debug, iter::Iterator, mem::size_of, ops::Range};
 
@@ -39,6 +40,7 @@ impl<R: Read + Seek> RiffParser<R> {
     }
 }
 
+#[derive(Debug)]
 pub enum ChunkType<R> {
     List(List<R>),
     Chunk(Chunk<R>),
@@ -58,7 +60,7 @@ struct ListHeader {
 
 #[derive(BinRead, Debug, Copy, Clone)]
 #[br(little)]
-pub enum Header {
+enum Header {
     #[br(magic = b"RIFF")]
     Riff(ListHeader),
     #[br(magic = b"LIST")]
@@ -66,20 +68,23 @@ pub enum Header {
     Chunk(ChunkHeader),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct Metadata<R> {
     reader: Rc<RefCell<R>>,
-    consumed: bool,
     data_start: u64,
 }
 
 impl<R> Metadata<R> {
     fn new(reader: Rc<RefCell<R>>, data_start: u64) -> Self {
-        Self {
-            reader,
-            consumed: false,
-            data_start,
-        }
+        Self { reader, data_start }
+    }
+}
+
+impl<R> Debug for Metadata<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Metadata")
+            .field("data_start", &self.data_start)
+            .finish()
     }
 }
 
@@ -101,8 +106,15 @@ trait ChunkData<R: Read + Seek> {
             .borrow_mut()
             .seek(SeekFrom::Start(data_end))
             .map_err(BinError::Io)?;
-        metadata.consumed = true;
         Ok(())
+    }
+
+    fn read_data_struct<S>(&mut self) -> BinResult<S>
+    where
+        S: BinRead + ReadEndian + Sized,
+        for<'a> <S as BinRead>::Args<'a>: Default,
+    {
+        S::read(&mut *self.metadata().reader.borrow_mut())
     }
 
     fn read_data_vec(&mut self) -> BinResult<Vec<u8>> {
@@ -128,11 +140,11 @@ trait ChunkData<R: Read + Seek> {
         if !data_size.is_multiple_of(2) {
             reader.read_exact(&mut [0u8; 1]).map_err(BinError::Io)?;
         }
-        metadata.consumed = true;
         Ok(())
     }
 }
 
+#[derive(Debug)]
 pub struct Chunk<R> {
     header: ChunkHeader,
     metadata: Metadata<R>,
@@ -157,9 +169,11 @@ impl<R: Read + Seek> ChunkData<R> for Chunk<R> {
     }
 }
 
+#[derive(Debug)]
 pub struct List<R> {
     header: ListHeader,
     metadata: Metadata<R>,
+    next_position: u64,
 }
 
 impl<R: Read + Seek> List<R> {
@@ -167,25 +181,35 @@ impl<R: Read + Seek> List<R> {
         Self {
             header,
             metadata: Metadata::new(reader, data_start),
+            next_position: data_start,
         }
     }
 
     fn read_next(&mut self) -> BinResult<ChunkType<R>> {
         let mut reader = self.metadata.reader.borrow_mut();
+        reader
+            .seek(SeekFrom::Start(self.next_position))
+            .map_err(BinError::Io)?;
         match Header::read(&mut *reader) {
             Ok(header) => {
                 let data_start = reader.stream_position().map_err(BinError::Io)?;
                 match header {
-                    Header::List(list_header) => Ok(ChunkType::List(List::new(
-                        list_header,
-                        Rc::clone(&self.metadata.reader),
-                        data_start,
-                    ))),
-                    Header::Chunk(chunk_header) => Ok(ChunkType::Chunk(Chunk::new(
-                        chunk_header,
-                        Rc::clone(&self.metadata.reader),
-                        data_start,
-                    ))),
+                    Header::List(list_header) => {
+                        self.next_position = data_start + list_header.size as u64;
+                        Ok(ChunkType::List(List::new(
+                            list_header,
+                            Rc::clone(&self.metadata.reader),
+                            data_start,
+                        )))
+                    }
+                    Header::Chunk(chunk_header) => {
+                        self.next_position = data_start + chunk_header.size as u64;
+                        Ok(ChunkType::Chunk(Chunk::new(
+                            chunk_header,
+                            Rc::clone(&self.metadata.reader),
+                            data_start,
+                        )))
+                    }
                     Header::Riff(_) => Err(BinError::Custom {
                         pos: data_start,
                         err: Box::new("malformed RIFF file"),
@@ -211,7 +235,11 @@ impl<R: Read + Seek> Iterator for List<R> {
     type Item = BinResult<ChunkType<R>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        Some(self.read_next())
+        if self.next_position >= self.metadata.data_start + self.header.size as u64 {
+            None
+        } else {
+            Some(self.read_next())
+        }
     }
 }
 
@@ -227,14 +255,34 @@ mod tests {
             "/Users/aw/Projects/rectalogic/experiments/vendor/esp32-tv/player/milk2.avi",
         )
         .unwrap();
-        let mut parser = RiffParser::new(file);
-
-        let riff = parser.next().unwrap().unwrap();
-        dbg!(&riff);
-        let mut hdr = parser.next().unwrap().unwrap();
-        dbg!(&hdr);
-        parser.skip_chunk(&mut hdr).unwrap();
-        let chunk = parser.next().unwrap().unwrap();
-        dbg!(&chunk);
+        let parser = RiffParser::new(file);
+        if let ChunkType::List(mut riff) = parser.riff().unwrap() {
+            dbg!(&riff);
+            riff.try_for_each(|chunk| -> Result<(), BinError> {
+                let chunk = chunk?;
+                match chunk {
+                    ChunkType::List(mut list) => {
+                        list.try_for_each(|subchunk| -> Result<(), BinError> {
+                            let subchunk = subchunk?;
+                            dbg!(&subchunk);
+                            match subchunk {
+                                ChunkType::List(sublist) => {
+                                    dbg!(sublist);
+                                }
+                                ChunkType::Chunk(subsubchunk) => {
+                                    dbg!(subsubchunk);
+                                }
+                            };
+                            Ok(())
+                        })?;
+                    }
+                    ChunkType::Chunk(chunk) => {
+                        dbg!(chunk);
+                    }
+                };
+                Ok(())
+            })
+            .unwrap();
+        };
     }
 }
