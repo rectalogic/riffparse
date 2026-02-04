@@ -79,15 +79,6 @@ impl<R> Metadata<R> {
     }
 }
 
-impl<R> Clone for Metadata<R> {
-    fn clone(&self) -> Self {
-        Self {
-            reader: Rc::clone(&self.reader),
-            data_start: self.data_start,
-        }
-    }
-}
-
 impl<R> Debug for Metadata<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Metadata")
@@ -151,7 +142,7 @@ pub trait ChunkRead<R: Read + Seek>: ChunkData<R> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Chunk<R> {
     header: ChunkHeader,
     metadata: Metadata<R>,
@@ -200,17 +191,8 @@ impl<R: Read + Seek> List<R> {
         self.header.list_id
     }
 
-    pub fn iter(&self) -> ListIter<R> {
-        ListIter::new(self.clone())
-    }
-}
-
-impl<R> Clone for List<R> {
-    fn clone(&self) -> Self {
-        Self {
-            header: self.header,
-            metadata: self.metadata.clone(),
-        }
+    pub fn iter(&'_ self) -> ListIter<'_, R> {
+        ListIter::new(self)
     }
 }
 
@@ -226,13 +208,13 @@ impl<R: Read + Seek> ChunkData<R> for List<R> {
 
 impl<R: Read + Seek> ChunkRead<R> for List<R> {}
 
-pub struct ListIter<R> {
-    list: List<R>,
+pub struct ListIter<'a, R> {
+    list: &'a List<R>,
     next_position: u64,
 }
 
-impl<R: Read + Seek> ListIter<R> {
-    fn new(list: List<R>) -> Self {
+impl<'a, R: Read + Seek> ListIter<'a, R> {
+    fn new(list: &'a List<R>) -> Self {
         Self {
             next_position: list.metadata.data_start,
             list,
@@ -281,7 +263,7 @@ impl<R: Read + Seek> ListIter<R> {
     }
 }
 
-impl<R: Read + Seek> Iterator for ListIter<R> {
+impl<'a, R: Read + Seek> Iterator for ListIter<'a, R> {
     type Item = BinResult<ChunkType<R>>;
 
     fn next(&mut self) -> Option<Self::Item> {
