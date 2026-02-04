@@ -278,6 +278,15 @@ impl<'a, R: Read + Seek> Iterator for ListIter<'a, R> {
     }
 }
 
+impl<'a, R: Read + Seek> IntoIterator for &'a List<R> {
+    type Item = BinResult<ChunkType<R>>;
+    type IntoIter = ListIter<'a, R>;
+
+    fn into_iter(self) -> ListIter<'a, R> {
+        self.iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::File;
