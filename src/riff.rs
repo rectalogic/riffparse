@@ -32,7 +32,7 @@ impl<R: Read + Seek> RiffParser<R> {
             Err(e) => return Err(e),
         };
         let data_start = reader.stream_position().map_err(BinError::Io)?;
-        Ok(ChunkType::List(List::new(
+        Ok(ChunkType::List(RiffItem::new(
             header,
             Rc::clone(&self.reader),
             data_start,
@@ -42,18 +42,18 @@ impl<R: Read + Seek> RiffParser<R> {
 
 #[derive(Debug)]
 pub enum ChunkType<R> {
-    List(List<R>),
-    Chunk(Chunk<R>),
+    List(RiffItem<ListHeader, R>),
+    Chunk(RiffItem<ChunkHeader, R>),
 }
 
 #[derive(BinRead, Debug, Copy, Clone)]
-struct ChunkHeader {
+pub struct ChunkHeader {
     chunk_id: Fourcc,
     size: u32,
 }
 
 #[derive(BinRead, Debug, Copy, Clone)]
-struct ListHeader {
+pub struct ListHeader {
     size: u32,
     list_id: Fourcc,
 }
@@ -143,25 +143,29 @@ pub trait ChunkRead<R: Read + Seek>: ChunkData<R> {
 }
 
 #[derive(Debug)]
-pub struct Chunk<R> {
-    header: ChunkHeader,
+pub struct RiffItem<H: Debug, R> {
+    header: H,
     metadata: Metadata<R>,
 }
 
-impl<R: Read + Seek> Chunk<R> {
-    fn new(header: ChunkHeader, reader: Rc<RefCell<R>>, data_start: u64) -> Self {
+impl<H: Debug, R: Read + Seek> RiffItem<H, R> {
+    fn new(header: H, reader: Rc<RefCell<R>>, data_start: u64) -> Self {
         Self {
             header,
             metadata: Metadata::new(reader, data_start),
         }
     }
+}
 
+impl<R: Read + Seek> ChunkRead<R> for RiffItem<ChunkHeader, R> {}
+
+impl<R: Read + Seek> RiffItem<ChunkHeader, R> {
     pub fn id(&self) -> Fourcc {
         self.header.chunk_id
     }
 }
 
-impl<R: Read + Seek> ChunkData<R> for Chunk<R> {
+impl<R: Read + Seek> ChunkData<R> for RiffItem<ChunkHeader, R> {
     fn metadata(&mut self) -> &mut Metadata<R> {
         &mut self.metadata
     }
@@ -171,22 +175,9 @@ impl<R: Read + Seek> ChunkData<R> for Chunk<R> {
     }
 }
 
-impl<R: Read + Seek> ChunkRead<R> for Chunk<R> {}
+impl<R: Read + Seek> ChunkRead<R> for RiffItem<ListHeader, R> {}
 
-#[derive(Debug)]
-pub struct List<R> {
-    header: ListHeader,
-    metadata: Metadata<R>,
-}
-
-impl<R: Read + Seek> List<R> {
-    fn new(header: ListHeader, reader: Rc<RefCell<R>>, data_start: u64) -> Self {
-        Self {
-            header,
-            metadata: Metadata::new(reader, data_start),
-        }
-    }
-
+impl<R: Read + Seek> RiffItem<ListHeader, R> {
     pub fn id(&self) -> Fourcc {
         self.header.list_id
     }
@@ -196,7 +187,7 @@ impl<R: Read + Seek> List<R> {
     }
 }
 
-impl<R: Read + Seek> ChunkData<R> for List<R> {
+impl<R: Read + Seek> ChunkData<R> for RiffItem<ListHeader, R> {
     fn metadata(&mut self) -> &mut Metadata<R> {
         &mut self.metadata
     }
@@ -207,15 +198,13 @@ impl<R: Read + Seek> ChunkData<R> for List<R> {
     }
 }
 
-impl<R: Read + Seek> ChunkRead<R> for List<R> {}
-
 pub struct ListIter<'a, R> {
-    list: &'a List<R>,
+    list: &'a RiffItem<ListHeader, R>,
     next_position: u64,
 }
 
 impl<'a, R: Read + Seek> ListIter<'a, R> {
-    fn new(list: &'a List<R>) -> Self {
+    fn new(list: &'a RiffItem<ListHeader, R>) -> Self {
         Self {
             next_position: list.metadata.data_start,
             list,
@@ -232,7 +221,7 @@ impl<'a, R: Read + Seek> ListIter<'a, R> {
                 let data_start = reader.stream_position().map_err(BinError::Io)?;
                 match header {
                     Header::List(list_header) => {
-                        let list = List::new(
+                        let list = RiffItem::new(
                             list_header,
                             Rc::clone(&self.list.metadata.reader),
                             data_start,
@@ -242,7 +231,7 @@ impl<'a, R: Read + Seek> ListIter<'a, R> {
                         Ok(ChunkType::List(list))
                     }
                     Header::Chunk(chunk_header) => {
-                        let chunk = Chunk::new(
+                        let chunk = RiffItem::new(
                             chunk_header,
                             Rc::clone(&self.list.metadata.reader),
                             data_start,
@@ -277,57 +266,11 @@ impl<'a, R: Read + Seek> Iterator for ListIter<'a, R> {
     }
 }
 
-impl<'a, R: Read + Seek> IntoIterator for &'a List<R> {
+impl<'a, R: Read + Seek> IntoIterator for &'a RiffItem<ListHeader, R> {
     type Item = BinResult<ChunkType<R>>;
     type IntoIter = ListIter<'a, R>;
 
     fn into_iter(self) -> ListIter<'a, R> {
         self.iter()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::fs::File;
-
-    use super::*;
-
-    #[test]
-    fn test_avi() {
-        let file = File::open(
-            "/Users/aw/Projects/rectalogic/experiments/vendor/esp32-tv/player/milk2.avi",
-        )
-        .unwrap();
-        let parser = RiffParser::new(file);
-        if let ChunkType::List(riff) = parser.riff().unwrap() {
-            dbg!(&riff);
-            riff.iter()
-                .try_for_each(|chunk| -> Result<(), BinError> {
-                    let chunk = chunk?;
-                    match chunk {
-                        ChunkType::List(list) => {
-                            dbg!(&list);
-                            list.iter()
-                                .try_for_each(|subchunk| -> Result<(), BinError> {
-                                    let subchunk = subchunk?;
-                                    match subchunk {
-                                        ChunkType::List(sublist) => {
-                                            dbg!(sublist);
-                                        }
-                                        ChunkType::Chunk(subsubchunk) => {
-                                            dbg!(subsubchunk);
-                                        }
-                                    };
-                                    Ok(())
-                                })?;
-                        }
-                        ChunkType::Chunk(chunk) => {
-                            dbg!(chunk);
-                        }
-                    };
-                    Ok(())
-                })
-                .unwrap();
-        };
     }
 }

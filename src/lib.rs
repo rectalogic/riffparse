@@ -4,4 +4,8 @@ extern crate alloc;
 
 pub mod fourcc;
 mod riff;
-pub use riff::{Chunk, ChunkRead, ChunkType, List, ListIter, RiffParser};
+pub use binrw::{
+    Error,
+    io::{Read, Seek, SeekFrom},
+};
+pub use riff::{ChunkRead, ChunkType, ListIter, RiffItem, RiffParser};
