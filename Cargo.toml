@@ -6,6 +6,8 @@ edition = "2024"
 [features]
 default = ["std"]
 std = ["binrw/std", "binrw/verbose-backtrace"]
+embedded-io = ["dep:embedded-io"]
 
 [dependencies]
 binrw = { version = "0.15.0", default-features = false }
+embedded-io = { version = "0.7.1", default-features = false, features = ["alloc"], optional = true }

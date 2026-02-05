@@ -4,6 +4,8 @@ extern crate alloc;
 
 pub mod avi;
 pub mod fourcc;
+#[cfg(not(feature = "std"))]
+pub mod io;
 mod riff;
 pub use binrw::{
     Error,
