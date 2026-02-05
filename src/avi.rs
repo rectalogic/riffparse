@@ -14,10 +14,8 @@ pub mod tag {
 
 /// https://learn.microsoft.com/en-us/previous-versions/ms779632(v=vs.85)
 #[derive(BinRead, Debug)]
-#[br(little, magic = b"avih")]
+#[br(little)]
 pub struct AviMainHeader {
-    // fcc: Fourcc - "avih"
-    pub cb: u32,
     pub micro_sec_per_frame: u32,
     pub max_bytes_per_sec: u32,
     pub padding_granularity: u32,
@@ -33,10 +31,8 @@ pub struct AviMainHeader {
 
 /// https://learn.microsoft.com/en-us/previous-versions/ms779638(v=vs.85)
 #[derive(BinRead, Debug)]
-#[br(little, magic = b"strh")]
+#[br(little)]
 pub struct AviStreamHeader {
-    // fcc: Fourcc - "strh"
-    pub cb: u32,
     pub fcc_type: Fourcc,
     pub fcc_handler: Fourcc,
     pub flags: u32,
@@ -56,10 +52,10 @@ pub struct AviStreamHeader {
 #[derive(BinRead, Debug)]
 #[br(little)]
 pub struct Frame {
-    pub left: i32,
-    pub top: i32,
-    pub right: i32,
-    pub bottom: i32,
+    pub left: i16,
+    pub top: i16,
+    pub right: i16,
+    pub bottom: i16,
 }
 
 /// https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2012/z5731wbz(v=vs.110)
