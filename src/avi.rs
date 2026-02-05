@@ -10,6 +10,8 @@ pub mod tag {
     pub const STRL: Fourcc = Fourcc::new(*b"strl");
     pub const STRH: Fourcc = Fourcc::new(*b"strh");
     pub const STRF: Fourcc = Fourcc::new(*b"strf");
+    pub const VIDS: Fourcc = Fourcc::new(*b"vids");
+    pub const AUDS: Fourcc = Fourcc::new(*b"auds");
 }
 
 /// https://learn.microsoft.com/en-us/previous-versions/ms779632(v=vs.85)
