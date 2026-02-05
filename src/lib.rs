@@ -9,4 +9,4 @@ pub use binrw::{
     Error,
     io::{Read, Seek, SeekFrom},
 };
-pub use riff::{Chunk, ChunkType, List, ListIter, RiffItem, RiffParser};
+pub use riff::{Chunk, List, ListIter, Riff, RiffParser, RiffType};

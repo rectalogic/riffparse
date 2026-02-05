@@ -19,7 +19,7 @@ impl<R: Read + Seek> RiffParser<R> {
         }
     }
 
-    pub fn riff(&self) -> BinResult<RiffItem<List, R>> {
+    pub fn riff(&self) -> BinResult<Riff<List, R>> {
         let mut reader = self.reader.borrow_mut();
         let header = match HeaderType::read(&mut *reader) {
             Ok(HeaderType::Riff(header)) => header,
@@ -32,28 +32,28 @@ impl<R: Read + Seek> RiffParser<R> {
             Err(e) => return Err(e),
         };
         let data_start = reader.stream_position().map_err(BinError::Io)?;
-        Ok(RiffItem::new(header, Rc::clone(&self.reader), data_start))
+        Ok(Riff::new(header, Rc::clone(&self.reader), data_start))
     }
 }
 
 #[derive(Debug)]
-pub enum ChunkType<R: Read + Seek> {
-    List(RiffItem<List, R>),
-    Chunk(RiffItem<Chunk, R>),
+pub enum RiffType<R: Read + Seek> {
+    List(Riff<List, R>),
+    Chunk(Riff<Chunk, R>),
 }
 
-impl<R: Read + Seek + Debug> Header for ChunkType<R> {
+impl<R: Read + Seek + Debug> Header for RiffType<R> {
     fn id(&self) -> Fourcc {
         match self {
-            ChunkType::List(list) => list.id(),
-            ChunkType::Chunk(chunk) => chunk.id(),
+            RiffType::List(list) => list.id(),
+            RiffType::Chunk(chunk) => chunk.id(),
         }
     }
 
     fn data_size(&self) -> u32 {
         match self {
-            ChunkType::List(list) => list.data_size(),
-            ChunkType::Chunk(chunk) => chunk.data_size(),
+            RiffType::List(list) => list.data_size(),
+            RiffType::Chunk(chunk) => chunk.data_size(),
         }
     }
 }
@@ -106,13 +106,13 @@ enum HeaderType {
     Chunk(Chunk),
 }
 
-pub struct RiffItem<H, R> {
+pub struct Riff<H, R> {
     header: H,
     reader: Rc<RefCell<R>>,
     data_start: u64,
 }
 
-impl<H: Header, R: Read + Seek> RiffItem<H, R> {
+impl<H: Header, R: Read + Seek> Riff<H, R> {
     fn new(header: H, reader: Rc<RefCell<R>>, data_start: u64) -> Self {
         Self {
             header,
@@ -172,7 +172,7 @@ impl<H: Header, R: Read + Seek> RiffItem<H, R> {
     }
 }
 
-impl<H: Header, R: Read + Seek> Debug for RiffItem<H, R> {
+impl<H: Header, R: Read + Seek> Debug for Riff<H, R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RiffItem")
             .field("header", &self.header)
@@ -181,26 +181,26 @@ impl<H: Header, R: Read + Seek> Debug for RiffItem<H, R> {
     }
 }
 
-impl<R: Read + Seek> RiffItem<List, R> {
+impl<R: Read + Seek> Riff<List, R> {
     pub fn iter(&'_ self) -> ListIter<'_, R> {
         ListIter::new(self)
     }
 }
 
 pub struct ListIter<'a, R> {
-    list: &'a RiffItem<List, R>,
+    list: &'a Riff<List, R>,
     next_position: u64,
 }
 
 impl<'a, R: Read + Seek> ListIter<'a, R> {
-    fn new(list: &'a RiffItem<List, R>) -> Self {
+    fn new(list: &'a Riff<List, R>) -> Self {
         Self {
             next_position: list.data_start,
             list,
         }
     }
 
-    fn read_next(&mut self) -> BinResult<ChunkType<R>> {
+    fn read_next(&mut self) -> BinResult<RiffType<R>> {
         let mut reader = self.list.reader.borrow_mut();
         reader
             .seek(SeekFrom::Start(self.next_position))
@@ -210,18 +210,17 @@ impl<'a, R: Read + Seek> ListIter<'a, R> {
                 let data_start = reader.stream_position().map_err(BinError::Io)?;
                 match header {
                     HeaderType::List(list_header) => {
-                        let list =
-                            RiffItem::new(list_header, Rc::clone(&self.list.reader), data_start);
+                        let list = Riff::new(list_header, Rc::clone(&self.list.reader), data_start);
                         self.next_position =
                             data_start + (list.data_size() + list.data_pad()) as u64;
-                        Ok(ChunkType::List(list))
+                        Ok(RiffType::List(list))
                     }
                     HeaderType::Chunk(chunk_header) => {
                         let chunk =
-                            RiffItem::new(chunk_header, Rc::clone(&self.list.reader), data_start);
+                            Riff::new(chunk_header, Rc::clone(&self.list.reader), data_start);
                         self.next_position =
                             data_start + (chunk.data_size() + chunk.data_pad()) as u64;
-                        Ok(ChunkType::Chunk(chunk))
+                        Ok(RiffType::Chunk(chunk))
                     }
                     HeaderType::Riff(_) => Err(BinError::Custom {
                         pos: data_start,
@@ -235,7 +234,7 @@ impl<'a, R: Read + Seek> ListIter<'a, R> {
 }
 
 impl<'a, R: Read + Seek> Iterator for ListIter<'a, R> {
-    type Item = BinResult<ChunkType<R>>;
+    type Item = BinResult<RiffType<R>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.next_position
@@ -249,8 +248,8 @@ impl<'a, R: Read + Seek> Iterator for ListIter<'a, R> {
     }
 }
 
-impl<'a, R: Read + Seek> IntoIterator for &'a RiffItem<List, R> {
-    type Item = BinResult<ChunkType<R>>;
+impl<'a, R: Read + Seek> IntoIterator for &'a Riff<List, R> {
+    type Item = BinResult<RiffType<R>>;
     type IntoIter = ListIter<'a, R>;
 
     fn into_iter(self) -> ListIter<'a, R> {

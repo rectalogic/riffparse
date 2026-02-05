@@ -1,26 +1,26 @@
 use core::fmt::Debug;
-use riffparse::{ChunkType, List, Read, RiffItem, RiffParser, Seek, avi};
+use riffparse::{List, Read, Riff, RiffParser, RiffType, Seek, avi};
 use std::fs::File;
 
-fn process_list<R: Read + Seek + Debug>(list: RiffItem<List, R>) {
+fn process_list<R: Read + Seek + Debug>(list: Riff<List, R>) {
     dbg!(&list);
 
     let mut stream: Option<avi::AviStreamHeader> = None;
     for chunk in list.iter() {
         let chunk = chunk.unwrap();
         match chunk {
-            ChunkType::List(list_item) => {
-                process_list(list_item);
+            RiffType::List(riff_list) => {
+                process_list(riff_list);
             }
-            ChunkType::Chunk(mut chunk_item) => {
-                dbg!(&chunk_item);
-                match chunk_item.id() {
+            RiffType::Chunk(mut riff_chunk) => {
+                dbg!(&riff_chunk);
+                match riff_chunk.id() {
                     avi::tag::AVIH => {
-                        let avih = chunk_item.read_data_struct::<avi::AviMainHeader>().unwrap();
+                        let avih = riff_chunk.read_data_struct::<avi::AviMainHeader>().unwrap();
                         dbg!(avih);
                     }
                     avi::tag::STRH => {
-                        let strh = chunk_item
+                        let strh = riff_chunk
                             .read_data_struct::<avi::AviStreamHeader>()
                             .unwrap();
                         dbg!(&strh);
@@ -31,12 +31,12 @@ fn process_list<R: Read + Seek + Debug>(list: RiffItem<List, R>) {
                             match strh.fcc_type {
                                 avi::tag::VIDS => {
                                     let vids =
-                                        chunk_item.read_data_struct::<avi::BitmapInfo>().unwrap();
+                                        riff_chunk.read_data_struct::<avi::BitmapInfo>().unwrap();
                                     dbg!(vids);
                                 }
                                 avi::tag::AUDS => {
                                     let auds =
-                                        chunk_item.read_data_struct::<avi::WaveFormat>().unwrap();
+                                        riff_chunk.read_data_struct::<avi::WaveFormat>().unwrap();
                                     dbg!(auds);
                                 }
                                 _ => {}
