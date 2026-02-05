@@ -1,4 +1,5 @@
 use alloc::rc::Rc;
+use alloc::{boxed::Box, vec, vec::Vec};
 use binrw::{
     BinRead, BinResult, Error as BinError,
     io::{Read, Seek, SeekFrom},
@@ -173,7 +174,7 @@ impl<H: Header, R: Read + Seek> Riff<H, R> {
 }
 
 impl<H: Header, R: Read + Seek> Debug for Riff<H, R> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("RiffItem")
             .field("header", &self.header)
             .field("data_start", &self.data_start)
