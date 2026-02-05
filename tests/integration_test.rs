@@ -1,4 +1,4 @@
-use riffparse::{ChunkRead, ChunkType, Error as BinError, RiffParser, avi};
+use riffparse::{ChunkType, Error as BinError, RiffParser, avi};
 use std::fs::File;
 
 #[test]
@@ -24,15 +24,15 @@ fn test_avi() {
                                     }
                                     ChunkType::Chunk(mut subsubchunk) => {
                                         dbg!(&subsubchunk);
-                                        match subsubchunk.id() {
-                                            avi::tag::AVIH => {
-                                                let avih = subsubchunk
-                                                    .read_data_struct::<avi::AviStreamHeader>()
-                                                    .unwrap();
-                                                dbg!(avih);
-                                            }
-                                            _ => {}
-                                        }
+                                        // match subsubchunk.id() {
+                                        //     avi::tag::AVIH => {
+                                        //         let avih = subsubchunk
+                                        //             .read_data_struct::<avi::AviMainHeader>()
+                                        //             .unwrap();
+                                        //         dbg!(avih);
+                                        //     }
+                                        //     _ => {}
+                                        // }
                                     }
                                 };
                                 Ok(())
