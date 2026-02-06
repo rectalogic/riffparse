@@ -130,6 +130,10 @@ impl<H: Header, R: Read + Seek> Riff<H, R> {
         }
     }
 
+    pub fn position(&self) -> u64 {
+        self.data_start
+    }
+
     pub fn data_size(&self) -> u32 {
         self.header.data_size()
     }
@@ -199,6 +203,10 @@ impl<'a, R: Read + Seek> ListIter<'a, R> {
             next_position: list.data_start,
             list,
         }
+    }
+
+    pub fn position(&self) -> u64 {
+        self.next_position
     }
 
     fn read_next(&mut self) -> BinResult<RiffType<R>> {

@@ -1,4 +1,7 @@
-use core::{fmt::Debug, ops::Deref};
+use core::{
+    fmt::{Debug, Display},
+    ops::Deref,
+};
 
 use binrw::BinRead;
 
@@ -28,6 +31,17 @@ impl Debug for Fourcc {
             write!(f, "Fourcc({s})")
         } else {
             write!(f, "Fourcc({bytes:?})")
+        }
+    }
+}
+
+impl Display for Fourcc {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let bytes = self.bytes();
+        if let Ok(s) = str::from_utf8(&bytes) {
+            write!(f, "{s}")
+        } else {
+            write!(f, "{}", self.0)
         }
     }
 }

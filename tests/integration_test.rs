@@ -16,32 +16,37 @@ use riffparse::{
 const SNAPSHOT: &str = include_str!("test.avi.snapshot");
 const AVI: &[u8] = include_bytes!("test.avi");
 
-fn debug<T: Debug, W: Write>(o: T, output: &mut W) {
-    write!(output, "{}", format_args!("{o:?}\n")).unwrap();
+fn debug<T: Debug, W: Write>(o: T, output: &mut W, indent: u8) {
+    writeln!(output, "{:indent$}{o:?}", "", indent = indent as usize).unwrap();
 }
 
-fn process_list<R: Read + Seek + Debug, W: Write>(list: Riff<List, R>, output: &mut W) {
-    debug(&list, output);
+fn process_list<R: Read + Seek + Debug, W: Write>(
+    list: Riff<List, R>,
+    output: &mut W,
+    mut indent: u8,
+) {
+    debug(&list, output, indent);
+    indent += 4;
 
     let mut stream: Option<avi::AviStreamHeader> = None;
     for chunk in list.iter() {
         let chunk = chunk.unwrap();
         match chunk {
             RiffType::List(riff_list) => {
-                process_list(riff_list, output);
+                process_list(riff_list, output, indent);
             }
             RiffType::Chunk(mut riff_chunk) => {
-                debug(&riff_chunk, output);
+                debug(&riff_chunk, output, indent);
                 match riff_chunk.id() {
                     avi::tag::AVIH => {
                         let avih = riff_chunk.read_data_struct::<avi::AviMainHeader>().unwrap();
-                        debug(avih, output);
+                        debug(avih, output, indent);
                     }
                     avi::tag::STRH => {
                         let strh = riff_chunk
                             .read_data_struct::<avi::AviStreamHeader>()
                             .unwrap();
-                        debug(&strh, output);
+                        debug(&strh, output, indent);
                         stream = Some(strh);
                     }
                     avi::tag::STRF => {
@@ -50,12 +55,12 @@ fn process_list<R: Read + Seek + Debug, W: Write>(list: Riff<List, R>, output: &
                                 avi::tag::VIDS => {
                                     let vids =
                                         riff_chunk.read_data_struct::<avi::BitmapInfo>().unwrap();
-                                    debug(vids, output);
+                                    debug(vids, output, indent);
                                 }
                                 avi::tag::AUDS => {
                                     let auds =
                                         riff_chunk.read_data_struct::<avi::WaveFormat>().unwrap();
-                                    debug(auds, output);
+                                    debug(auds, output, indent);
                                 }
                                 _ => {}
                             };
@@ -71,7 +76,7 @@ fn process_list<R: Read + Seek + Debug, W: Write>(list: Riff<List, R>, output: &
 
 fn dump_avi<R: Read + Seek + Debug, W: Write>(avi: R, output: &mut W) {
     let parser = RiffParser::new(avi);
-    process_list(parser.riff().unwrap(), output);
+    process_list(parser.riff().unwrap(), output, 0);
 }
 
 #[test]
@@ -79,6 +84,59 @@ fn test_avi() {
     let mut output = Vec::new();
     dump_avi(Cursor::new(AVI), &mut output);
     assert_eq!(SNAPSHOT, String::from_utf8(output).unwrap());
+}
+
+#[test]
+fn test_avi_video() {
+    let mut parser = RiffParser::new(Cursor::new(AVI));
+    let avi_parser = avi::AviParser::new(&mut parser).unwrap();
+
+    let avi::StreamInfo::Video {
+        stream_id: video_id,
+        ..
+    } = avi_parser.stream_info[0]
+    else {
+        panic!("stream 0 not video");
+    };
+    let avi::StreamInfo::Audio {
+        stream_id: audio_id,
+        ..
+    } = avi_parser.stream_info[1]
+    else {
+        panic!("stream 1 not audio");
+    };
+    assert_eq!(
+        avi_parser
+            .movi
+            .iter()
+            .filter(|result| {
+                if let Ok(RiffType::Chunk(chunk)) = result
+                    && chunk.id() == video_id
+                {
+                    true
+                } else {
+                    false
+                }
+            })
+            .count(),
+        20
+    );
+    assert_eq!(
+        avi_parser
+            .movi
+            .iter()
+            .filter(|result| {
+                if let Ok(RiffType::Chunk(chunk)) = result
+                    && chunk.id() == audio_id
+                {
+                    true
+                } else {
+                    false
+                }
+            })
+            .count(),
+        15
+    );
 }
 
 #[cfg(feature = "embedded-io")]
