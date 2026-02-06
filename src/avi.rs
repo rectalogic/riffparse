@@ -12,6 +12,23 @@ pub mod tag {
     pub const STRF: Fourcc = Fourcc::new(*b"strf");
     pub const VIDS: Fourcc = Fourcc::new(*b"vids");
     pub const AUDS: Fourcc = Fourcc::new(*b"auds");
+
+    pub const DATA_VIDEO_COMPRESSED: [u8; 2] = *b"dc";
+    pub const DATA_VIDEO_UNCOMPRESSED: [u8; 2] = *b"db";
+    pub const DATA_PALETTE_CHANGED: [u8; 2] = *b"pc";
+    pub const DATA_AUDIO: [u8; 2] = *b"wb";
+
+    pub const fn stream(mut stream_index: u32, datatype: [u8; 2]) -> Fourcc {
+        if stream_index > 99 {
+            stream_index = 99; // clamp to two digits
+        }
+        Fourcc::new([
+            b'0' + ((stream_index / 10) as u8),
+            b'0' + ((stream_index % 10) as u8),
+            datatype[0],
+            datatype[1],
+        ])
+    }
 }
 
 /// https://learn.microsoft.com/en-us/previous-versions/ms779632(v=vs.85)
@@ -166,4 +183,18 @@ pub struct Mp3WaveFormat {
     pub block_size: u16,
     pub frames_per_block: u16,
     pub codec_delay: u16,
+}
+
+#[derive(Debug)]
+pub enum StreamInfo {
+    Audio {
+        stream_id: Fourcc,
+        stream_header: AviStreamHeader,
+        wave_format: WaveFormat,
+    },
+    Video {
+        stream_id: Fourcc,
+        stream_header: AviStreamHeader,
+        bitmap_info: BitmapInfo,
+    },
 }

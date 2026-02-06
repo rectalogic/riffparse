@@ -5,9 +5,10 @@ use alloc::{string::String, vec::Vec};
 use core::fmt::Debug;
 #[cfg(feature = "embedded-io")]
 use riffparse::EmbeddedAdapter;
-#[cfg(feature = "std")]
-use riffparse::binrw::io::Cursor;
-use riffparse::{List, Read, Riff, RiffParser, RiffType, Seek, avi, binrw::io::Write};
+use riffparse::{
+    List, Read, Riff, RiffParser, RiffType, Seek, avi,
+    binrw::io::{Cursor, Write},
+};
 
 // Generate test video:
 // ffmpeg -y -f lavfi -i testsrc=size=32x24:rate=20:duration=1:decimals=3 -f lavfi -i sine=frequency=1000:sample_rate=16000 -c:v mjpeg -c:a pcm_s16le -shortest -r 20 -f avi test.avi
@@ -73,7 +74,6 @@ fn dump_avi<R: Read + Seek + Debug, W: Write>(avi: R, output: &mut W) {
     process_list(parser.riff().unwrap(), output);
 }
 
-#[cfg(feature = "std")]
 #[test]
 fn test_avi() {
     let mut output = Vec::new();

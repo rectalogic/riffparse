@@ -16,7 +16,7 @@ impl Fourcc {
         Self(u32::from_le_bytes(bytes))
     }
 
-    pub fn bytes(&self) -> [u8; 4] {
+    pub const fn bytes(&self) -> [u8; 4] {
         self.0.to_le_bytes()
     }
 }
