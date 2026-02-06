@@ -3,6 +3,7 @@ use embedded_io::{
     Error as EError, ErrorKind as EErrorKind, Read as ERead, Seek as ESeek, SeekFrom as ESeekFrom,
 };
 
+#[derive(Debug)]
 pub struct EmbeddedAdapter<T>(pub T);
 
 impl<T> From<T> for EmbeddedAdapter<T> {

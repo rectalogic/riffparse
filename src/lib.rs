@@ -5,7 +5,10 @@ extern crate alloc;
 pub mod avi;
 pub mod fourcc;
 #[cfg(feature = "embedded-io")]
-pub mod io;
+mod io;
+#[cfg(feature = "embedded-io")]
+pub use io::EmbeddedAdapter;
+
 mod riff;
 pub use binrw::{
     self, Error,
