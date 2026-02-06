@@ -1,13 +1,18 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+use alloc::{string::String, vec::Vec};
 use core::fmt::Debug;
-use riffparse::{List, Read, Riff, RiffParser, RiffType, Seek, avi};
-use std::{
-    fs::{self, File},
-    io::Write,
-    path::PathBuf,
+use riffparse::{
+    List, Read, Riff, RiffParser, RiffType, Seek, avi,
+    binrw::io::{Cursor, Write},
 };
 
 // Generate test video:
 // ffmpeg -y -f lavfi -i testsrc=size=32x24:rate=20:duration=1:decimals=3 -f lavfi -i sine=frequency=1000:sample_rate=16000 -c:v mjpeg -c:a pcm_s16le -shortest -r 20 -f avi test.avi
+
+const SNAPSHOT: &str = include_str!("test.avi.snapshot");
+const AVI: &[u8] = include_bytes!("test.avi");
 
 fn debug<T: Debug, W: Write>(o: T, output: &mut W) {
     write!(output, "{}", format_args!("{o:?}\n")).unwrap();
@@ -63,24 +68,22 @@ fn process_list<R: Read + Seek + Debug, W: Write>(list: Riff<List, R>, output: &
 }
 
 fn dump_avi<W: Write>(output: &mut W) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test.avi");
-    let file = File::open(path).unwrap();
-    let parser = RiffParser::new(file);
+    let parser = RiffParser::new(Cursor::new(AVI));
     process_list(parser.riff().unwrap(), output);
 }
 
 #[test]
 fn test_avi() {
-    let snapshot_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test.avi.snapshot");
-    let snapshot = fs::read_to_string(snapshot_path).unwrap();
     let mut output = Vec::new();
     dump_avi(&mut output);
-    assert_eq!(snapshot, String::from_utf8(output).unwrap());
+    assert_eq!(SNAPSHOT, String::from_utf8(output).unwrap());
 }
 
+#[cfg(feature = "std")]
 #[test]
 #[ignore]
 fn test_avi_snapshot() {
+    use std::{fs::File, path::PathBuf};
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test.avi.snapshot");
     let mut file = File::create(path).unwrap();
     dump_avi(&mut file);

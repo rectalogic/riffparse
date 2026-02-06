@@ -4,11 +4,11 @@ extern crate alloc;
 
 pub mod avi;
 pub mod fourcc;
-#[cfg(not(feature = "std"))]
+#[cfg(feature = "embedded-io")]
 pub mod io;
 mod riff;
 pub use binrw::{
-    Error,
+    self, Error,
     io::{Read, Seek, SeekFrom},
 };
 pub use riff::{Chunk, List, ListIter, Riff, RiffParser, RiffType};
