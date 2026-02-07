@@ -12,9 +12,12 @@ use riffparse::{
 
 // Generate test video:
 // ffmpeg -y -f lavfi -i testsrc=size=32x24:rate=20:duration=1:decimals=3 -f lavfi -i sine=frequency=1000:sample_rate=16000 -c:v mjpeg -c:a pcm_s16le -shortest -r 20 -f avi test.avi
+// ffmpeg -y -f lavfi -i testsrc=size=32x24:rate=20:duration=1:decimals=3 -f lavfi -i sine=frequency=1000:sample_rate=16000 -vn -c:a mp3 -t 2 -r 20 -f avi mp3.avi
 
-const SNAPSHOT: &str = include_str!("test.avi.snapshot");
-const AVI: &[u8] = include_bytes!("test.avi");
+const TEST_AVI_SNAPSHOT: &str = include_str!("test.avi.snapshot");
+const TEST_AVI: &[u8] = include_bytes!("test.avi");
+const MP3_AVI_SNAPSHOT: &str = include_str!("mp3.avi.snapshot");
+const MP3_AVI: &[u8] = include_bytes!("mp3.avi");
 
 fn debug<T: Debug, W: Write>(o: T, output: &mut W, indent: u8) {
     writeln!(output, "{:indent$}{o:?}", "", indent = indent as usize).unwrap();
@@ -80,15 +83,22 @@ fn dump_avi<R: Read + Seek + Debug, W: Write>(avi: R, output: &mut W) {
 }
 
 #[test]
-fn test_avi() {
+fn test_test_avi() {
     let mut output = Vec::new();
-    dump_avi(Cursor::new(AVI), &mut output);
-    assert_eq!(SNAPSHOT, String::from_utf8(output).unwrap());
+    dump_avi(Cursor::new(TEST_AVI), &mut output);
+    assert_eq!(TEST_AVI_SNAPSHOT, String::from_utf8(output).unwrap());
+}
+
+#[test]
+fn test_mp3_avi() {
+    let mut output = Vec::new();
+    dump_avi(Cursor::new(MP3_AVI), &mut output);
+    assert_eq!(MP3_AVI_SNAPSHOT, String::from_utf8(output).unwrap());
 }
 
 #[test]
 fn test_avi_video() {
-    let mut parser = RiffParser::new(Cursor::new(AVI));
+    let mut parser = RiffParser::new(Cursor::new(TEST_AVI));
     let avi_parser = avi::AviParser::new(&mut parser).unwrap();
 
     let avi::StreamInfo::Video {
@@ -162,17 +172,29 @@ pub mod embedded {
 #[test]
 fn test_avi_embeddedio() {
     let mut output = Vec::new();
-    let avi = embedded::Reader::new(AVI.to_vec());
+    let avi = embedded::Reader::new(TEST_AVI.to_vec());
     dump_avi(EmbeddedAdapter(avi), &mut output);
-    assert_eq!(SNAPSHOT, String::from_utf8(output).unwrap());
+    assert_eq!(TEST_AVI_SNAPSHOT, String::from_utf8(output).unwrap());
+}
+
+#[cfg(feature = "std")]
+fn write_snapshot(avi: &[u8], snapshot_file: &str) {
+    use std::{fs::File, path::PathBuf};
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(snapshot_file);
+    let mut file = File::create(path).unwrap();
+    dump_avi(Cursor::new(avi), &mut file);
 }
 
 #[cfg(feature = "std")]
 #[test]
 #[ignore]
-fn test_avi_snapshot() {
-    use std::{fs::File, path::PathBuf};
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test.avi.snapshot");
-    let mut file = File::create(path).unwrap();
-    dump_avi(Cursor::new(AVI), &mut file);
+fn test_test_avi_snapshot() {
+    write_snapshot(TEST_AVI, "tests/test.avi.snapshot");
+}
+
+#[cfg(feature = "std")]
+#[test]
+#[ignore]
+fn test_mp3_avi_snapshot() {
+    write_snapshot(MP3_AVI, "tests/mp3.avi.snapshot");
 }
