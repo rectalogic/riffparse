@@ -24,30 +24,33 @@ fn debug<T: Debug, W: Write>(o: T, output: &mut W, indent: u8) {
 }
 
 fn process_list<R: Read + Seek + Debug, W: Write>(
-    list: Riff<List, R>,
+    parser: &RiffParser<R>,
+    list: Riff<List>,
     output: &mut W,
     mut indent: u8,
 ) {
-    debug(&list, output, indent);
+    debug(list, output, indent);
     indent += 4;
 
     let mut stream: Option<avi::AviStreamHeader> = None;
-    for chunk in list.iter() {
+    for chunk in parser.chunks(list) {
         let chunk = chunk.unwrap();
         match chunk {
             RiffType::List(riff_list) => {
-                process_list(riff_list, output, indent);
+                process_list(parser, riff_list, output, indent);
             }
-            RiffType::Chunk(mut riff_chunk) => {
-                debug(&riff_chunk, output, indent);
+            RiffType::Chunk(riff_chunk) => {
+                debug(riff_chunk, output, indent);
                 match riff_chunk.id() {
                     avi::tag::AVIH => {
-                        let avih = riff_chunk.read_data_struct::<avi::AviMainHeader>().unwrap();
+                        let avih = parser
+                            .read_data_struct::<avi::AviMainHeader>(riff_chunk)
+                            .unwrap();
                         debug(avih, output, indent);
                     }
                     avi::tag::STRH => {
-                        let strh = riff_chunk
-                            .read_data_struct::<avi::AviStreamHeader>()
+                        let strh = parser
+                            .read_data_struct::<avi::AviStreamHeader>(riff_chunk)
                             .unwrap();
                         debug(&strh, output, indent);
                         stream = Some(strh);
@@ -56,13 +59,15 @@ fn process_list<R: Read + Seek + Debug, W: Write>(
                         if let Some(strh) = stream {
                             match strh.fcc_type {
                                 avi::tag::VIDS => {
-                                    let vids =
-                                        riff_chunk.read_data_struct::<avi::BitmapInfo>().unwrap();
+                                    let vids = parser
+                                        .read_data_struct::<avi::BitmapInfo>(riff_chunk)
+                                        .unwrap();
                                     debug(vids, output, indent);
                                 }
                                 avi::tag::AUDS => {
-                                    let auds =
-                                        riff_chunk.read_data_struct::<avi::WaveFormat>().unwrap();
+                                    let auds = parser
+                                        .read_data_struct::<avi::WaveFormat>(riff_chunk)
+                                        .unwrap();
                                     debug(auds, output, indent);
                                 }
                                 _ => {}
@@ -79,7 +84,7 @@ fn process_list<R: Read + Seek + Debug, W: Write>(
 
 fn dump_avi<R: Read + Seek + Debug, W: Write>(avi: R, output: &mut W) {
     let parser = RiffParser::new(avi);
-    process_list(parser.riff().unwrap(), output, 0);
+    process_list(&parser, parser.riff().unwrap(), output, 0);
 }
 
 #[test]
@@ -98,8 +103,8 @@ fn test_mp3_avi() {
 
 #[test]
 fn test_avi_video() {
-    let mut parser = RiffParser::new(Cursor::new(TEST_AVI));
-    let avi_parser = avi::AviParser::new(&mut parser).unwrap();
+    let parser = RiffParser::new(Cursor::new(TEST_AVI));
+    let avi_parser = avi::AviParser::new(parser).unwrap();
 
     let avi::StreamInfo::Video {
         stream_id: video_id,

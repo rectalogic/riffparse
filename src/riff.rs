@@ -21,7 +21,7 @@ impl<R: Read + Seek> RiffParser<R> {
         }
     }
 
-    pub fn riff(&self) -> BinResult<Riff<List, R>> {
+    pub fn riff(&self) -> BinResult<Riff<List>> {
         let mut reader = self.reader.borrow_mut();
         let header = match HeaderType::read(&mut *reader) {
             Ok(HeaderType::Riff(header)) => header,
@@ -34,17 +34,59 @@ impl<R: Read + Seek> RiffParser<R> {
             Err(e) => return Err(e),
         };
         let data_start = reader.stream_position().map_err(BinError::Io)?;
-        Ok(Riff::new(header, Rc::clone(&self.reader), data_start))
+        Ok(Riff::new(header, data_start))
+    }
+
+    pub fn chunks(&self, chunk: Riff<List>) -> ListIter<R> {
+        ListIter::new(chunk, Rc::clone(&self.reader))
+    }
+
+    pub fn read_data_struct<S>(&self, chunk: Riff<Chunk>) -> BinResult<S>
+    where
+        S: BinRead + ReadEndian + Sized,
+        for<'a> <S as BinRead>::Args<'a>: Default,
+    {
+        let mut reader = self.reader.borrow_mut();
+        reader
+            .seek(SeekFrom::Start(chunk.data_start))
+            .map_err(BinError::Io)?;
+        let mut limited_reader = reader.by_ref().take_seek(chunk.data_size() as u64);
+        S::read(&mut limited_reader)
+    }
+
+    pub fn read_data_vec<H: Header>(&self, chunk: Riff<H>) -> BinResult<Vec<u8>> {
+        let data_size = chunk.data_size();
+        let mut buffer = vec![0u8; data_size as usize];
+        self.read_data(chunk, &mut buffer)?;
+        Ok(buffer)
+    }
+
+    pub fn read_data<H: Header>(&self, chunk: Riff<H>, buffer: &mut [u8]) -> BinResult<()> {
+        let data_size = chunk.data_size();
+        let data_pad = chunk.data_pad();
+        let mut reader = self.reader.borrow_mut();
+        if buffer.len() > data_size as usize {
+            return Err(BinError::AssertFail {
+                pos: chunk.data_start,
+                message: "buffer too large".into(),
+            });
+        }
+        reader.read_exact(buffer).map_err(BinError::Io)?;
+        // Skip padding byte
+        if data_pad == 1 {
+            reader.read_exact(&mut [0u8; 1]).map_err(BinError::Io)?;
+        }
+        Ok(())
     }
 }
 
-#[derive(Debug)]
-pub enum RiffType<R: Read + Seek> {
-    List(Riff<List, R>),
-    Chunk(Riff<Chunk, R>),
+#[derive(Debug, Copy, Clone)]
+pub enum RiffType {
+    List(Riff<List>),
+    Chunk(Riff<Chunk>),
 }
 
-impl<R: Read + Seek + Debug> Header for RiffType<R> {
+impl Header for RiffType {
     fn id(&self) -> Fourcc {
         match self {
             RiffType::List(list) => list.id(),
@@ -60,7 +102,7 @@ impl<R: Read + Seek + Debug> Header for RiffType<R> {
     }
 }
 
-pub trait Header: Debug {
+pub trait Header: Copy + Clone + Debug {
     fn id(&self) -> Fourcc;
     fn data_size(&self) -> u32;
 }
@@ -108,19 +150,15 @@ enum HeaderType {
     Chunk(Chunk),
 }
 
-pub struct Riff<H, R> {
+#[derive(Debug, Copy, Clone)]
+pub struct Riff<H> {
     header: H,
-    reader: Rc<RefCell<R>>,
     data_start: u64,
 }
 
-impl<H: Header, R: Read + Seek> Riff<H, R> {
-    fn new(header: H, reader: Rc<RefCell<R>>, data_start: u64) -> Self {
-        Self {
-            header,
-            reader,
-            data_start,
-        }
+impl<H: Header> Riff<H> {
+    fn new(header: H, data_start: u64) -> Self {
+        Self { header, data_start }
     }
 
     fn data_pad(&self) -> u32 {
@@ -142,69 +180,18 @@ impl<H: Header, R: Read + Seek> Riff<H, R> {
     pub fn id(&self) -> Fourcc {
         self.header.id()
     }
-
-    pub fn read_data_struct<S>(&mut self) -> BinResult<S>
-    where
-        S: BinRead + ReadEndian + Sized,
-        for<'a> <S as BinRead>::Args<'a>: Default,
-    {
-        let mut reader = self.reader.borrow_mut();
-        reader
-            .seek(SeekFrom::Start(self.data_start))
-            .map_err(BinError::Io)?;
-        let mut limited_reader = reader.by_ref().take_seek(self.data_size() as u64);
-        S::read(&mut limited_reader)
-    }
-
-    pub fn read_data_vec(&mut self) -> BinResult<Vec<u8>> {
-        let data_size = self.data_size();
-        let mut buffer = vec![0u8; data_size as usize];
-        self.read_data(&mut buffer)?;
-        Ok(buffer)
-    }
-
-    pub fn read_data(&mut self, buffer: &mut [u8]) -> BinResult<()> {
-        let data_size = self.data_size();
-        let data_pad = self.data_pad();
-        let mut reader = self.reader.borrow_mut();
-        if buffer.len() > data_size as usize {
-            return Err(BinError::AssertFail {
-                pos: self.data_start,
-                message: "buffer too large".into(),
-            });
-        }
-        reader.read_exact(buffer).map_err(BinError::Io)?;
-        // Skip padding byte
-        if data_pad == 1 {
-            reader.read_exact(&mut [0u8; 1]).map_err(BinError::Io)?;
-        }
-        Ok(())
-    }
 }
 
-impl<H: Header, R: Read + Seek> Debug for Riff<H, R> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("RiffItem")
-            .field("header", &self.header)
-            .field("data_start", &self.data_start)
-            .finish()
-    }
-}
-
-impl<R: Read + Seek> Riff<List, R> {
-    pub fn iter(&'_ self) -> ListIter<'_, R> {
-        ListIter::new(self)
-    }
-}
-
-pub struct ListIter<'a, R> {
-    list: &'a Riff<List, R>,
+pub struct ListIter<R> {
+    reader: Rc<RefCell<R>>,
+    list: Riff<List>,
     next_position: u64,
 }
 
-impl<'a, R: Read + Seek> ListIter<'a, R> {
-    fn new(list: &'a Riff<List, R>) -> Self {
+impl<R: Read + Seek> ListIter<R> {
+    fn new(list: Riff<List>, reader: Rc<RefCell<R>>) -> Self {
         Self {
+            reader,
             next_position: list.data_start,
             list,
         }
@@ -214,8 +201,8 @@ impl<'a, R: Read + Seek> ListIter<'a, R> {
         self.next_position
     }
 
-    fn read_next(&mut self) -> BinResult<RiffType<R>> {
-        let mut reader = self.list.reader.borrow_mut();
+    fn read_next(&mut self) -> BinResult<RiffType> {
+        let mut reader = self.reader.borrow_mut();
         reader
             .seek(SeekFrom::Start(self.next_position))
             .map_err(BinError::Io)?;
@@ -224,14 +211,13 @@ impl<'a, R: Read + Seek> ListIter<'a, R> {
                 let data_start = reader.stream_position().map_err(BinError::Io)?;
                 match header {
                     HeaderType::List(list_header) => {
-                        let list = Riff::new(list_header, Rc::clone(&self.list.reader), data_start);
+                        let list = Riff::new(list_header, data_start);
                         self.next_position =
                             data_start + (list.data_size() + list.data_pad()) as u64;
                         Ok(RiffType::List(list))
                     }
                     HeaderType::Chunk(chunk_header) => {
-                        let chunk =
-                            Riff::new(chunk_header, Rc::clone(&self.list.reader), data_start);
+                        let chunk = Riff::new(chunk_header, data_start);
                         self.next_position =
                             data_start + (chunk.data_size() + chunk.data_pad()) as u64;
                         Ok(RiffType::Chunk(chunk))
@@ -247,8 +233,8 @@ impl<'a, R: Read + Seek> ListIter<'a, R> {
     }
 }
 
-impl<'a, R: Read + Seek> Iterator for ListIter<'a, R> {
-    type Item = BinResult<RiffType<R>>;
+impl<R: Read + Seek> Iterator for ListIter<R> {
+    type Item = BinResult<RiffType>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.next_position
@@ -259,14 +245,5 @@ impl<'a, R: Read + Seek> Iterator for ListIter<'a, R> {
         } else {
             Some(self.read_next())
         }
-    }
-}
-
-impl<'a, R: Read + Seek> IntoIterator for &'a Riff<List, R> {
-    type Item = BinResult<RiffType<R>>;
-    type IntoIter = ListIter<'a, R>;
-
-    fn into_iter(self) -> ListIter<'a, R> {
-        self.iter()
     }
 }

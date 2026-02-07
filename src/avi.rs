@@ -190,47 +190,29 @@ pub enum StreamInfo {
 }
 
 pub struct AviParser<R> {
+    parser: RiffParser<R>,
     pub stream_info: Vec<StreamInfo>,
-    pub movi: Riff<List, R>,
+    pub movi: Riff<List>,
 }
 
 impl<R: Read + Seek> AviParser<R> {
-    fn eof_error() -> Error {
-        Error::Io(io::Error::from(io::ErrorKind::UnexpectedEof))
-    }
-
-    fn missing_error(position: u64, tag: Fourcc) -> Error {
-        Error::AssertFail {
-            pos: position,
-            message: format!("missing {}", tag),
-        }
-    }
-
-    fn validate_tag<H: Header>(riff: &Riff<H, R>, tag: Fourcc) -> Result<(), Error> {
-        if riff.id() != tag {
-            Err(Self::missing_error(riff.position(), tag))
-        } else {
-            Ok(())
-        }
-    }
-
-    pub fn new(parser: &mut RiffParser<R>) -> Result<Self, Error> {
+    pub fn new(parser: RiffParser<R>) -> Result<Self, Error> {
         let riff = parser.riff()?;
         Self::validate_tag(&riff, tag::AVI)?;
 
-        let mut avi_iter = riff.iter();
+        let mut avi_iter = parser.chunks(riff);
         let RiffType::List(hdrl) = avi_iter.next().ok_or_else(Self::eof_error)?? else {
             return Err(Self::missing_error(avi_iter.position(), tag::HDRL));
         };
         Self::validate_tag(&hdrl, tag::HDRL)?;
 
-        let mut hdrl_iter = hdrl.iter();
-        let RiffType::Chunk(mut avih) = hdrl_iter.next().ok_or_else(Self::eof_error)?? else {
+        let mut hdrl_iter = parser.chunks(hdrl);
+        let RiffType::Chunk(avih) = hdrl_iter.next().ok_or_else(Self::eof_error)?? else {
             return Err(Self::missing_error(hdrl_iter.position(), tag::AVIH));
         };
         Self::validate_tag(&avih, tag::AVIH)?;
 
-        let main_header = avih.read_data_struct::<AviMainHeader>()?;
+        let main_header = parser.read_data_struct::<AviMainHeader>(avih)?;
         let mut stream_info = Vec::with_capacity(main_header.streams as usize);
 
         for stream_index in 0..main_header.streams {
@@ -239,20 +221,20 @@ impl<R: Read + Seek> AviParser<R> {
             };
             Self::validate_tag(&strl, tag::STRL)?;
 
-            let mut strl_iter = strl.iter();
-            let RiffType::Chunk(mut strh) = strl_iter.next().ok_or_else(Self::eof_error)?? else {
+            let mut strl_iter = parser.chunks(strl);
+            let RiffType::Chunk(strh) = strl_iter.next().ok_or_else(Self::eof_error)?? else {
                 return Err(Self::missing_error(strl_iter.position(), tag::STRH));
             };
             Self::validate_tag(&strh, tag::STRH)?;
-            let stream_header = strh.read_data_struct::<AviStreamHeader>()?;
-            let RiffType::Chunk(mut strf) = strl_iter.next().ok_or_else(Self::eof_error)?? else {
+            let stream_header = parser.read_data_struct::<AviStreamHeader>(strh)?;
+            let RiffType::Chunk(strf) = strl_iter.next().ok_or_else(Self::eof_error)?? else {
                 return Err(Self::missing_error(strl_iter.position(), tag::STRF));
             };
             Self::validate_tag(&strf, tag::STRF)?;
 
             match stream_header.fcc_type {
                 tag::VIDS => {
-                    let bitmap_info = strf.read_data_struct::<BitmapInfo>()?;
+                    let bitmap_info = parser.read_data_struct::<BitmapInfo>(strf)?;
                     stream_info.push(StreamInfo::Video {
                         stream_id: tag::stream(
                             stream_index,
@@ -264,7 +246,7 @@ impl<R: Read + Seek> AviParser<R> {
                     });
                 }
                 tag::AUDS => {
-                    let wave_format = strf.read_data_struct::<WaveFormat>()?;
+                    let wave_format = parser.read_data_struct::<WaveFormat>(strf)?;
                     stream_info.push(StreamInfo::Audio {
                         stream_id: tag::stream(stream_index, tag::DATA_AUDIO),
                         stream_header,
@@ -283,11 +265,15 @@ impl<R: Read + Seek> AviParser<R> {
             })
             .ok_or_else(Self::eof_error)??;
 
-        Ok(Self { stream_info, movi })
+        Ok(Self {
+            parser,
+            stream_info,
+            movi,
+        })
     }
 
-    pub fn iter(&self, stream_id: Fourcc) -> impl Iterator<Item = Result<RiffType<R>, Error>> + '_ {
-        self.movi.iter().filter(move |result| {
+    pub fn iter(&self, stream_id: Fourcc) -> impl Iterator<Item = Result<RiffType, Error>> + '_ {
+        self.parser.chunks(self.movi).filter(move |result| {
             if let Ok(RiffType::Chunk(chunk)) = result
                 && chunk.id() == stream_id
             {
@@ -296,6 +282,25 @@ impl<R: Read + Seek> AviParser<R> {
                 false
             }
         })
+    }
+
+    fn eof_error() -> Error {
+        Error::Io(io::Error::from(io::ErrorKind::UnexpectedEof))
+    }
+
+    fn missing_error(position: u64, tag: Fourcc) -> Error {
+        Error::AssertFail {
+            pos: position,
+            message: format!("missing {}", tag),
+        }
+    }
+
+    fn validate_tag<H: Header>(riff: &Riff<H>, tag: Fourcc) -> Result<(), Error> {
+        if riff.id() != tag {
+            Err(Self::missing_error(riff.position(), tag))
+        } else {
+            Ok(())
+        }
     }
 }
 
