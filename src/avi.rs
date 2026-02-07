@@ -83,17 +83,11 @@ pub struct Frame {
 }
 
 /// https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2012/z5731wbz(v=vs.110)
+/// https://learn.microsoft.com/en-us/previous-versions/dd183376(v=vs.85)
+// Ignore RGBQUAD bmiColors[1] array at end
 #[derive(BinRead, Debug)]
 #[br(little)]
 pub struct BitmapInfo {
-    pub header: BitmapInfoHeader,
-    pub colors: RgbQuad,
-}
-
-/// https://learn.microsoft.com/en-us/previous-versions/dd183376(v=vs.85)
-#[derive(BinRead, Debug)]
-#[br(little)]
-pub struct BitmapInfoHeader {
     pub size: u32,
     pub width: i32,
     pub height: i32,
@@ -105,16 +99,6 @@ pub struct BitmapInfoHeader {
     pub y_pels_per_meter: i32,
     pub clr_used: u32,
     pub clr_important: u32,
-}
-
-/// https://learn.microsoft.com/en-us/previous-versions/ms911013(v=msdn.10)
-#[derive(BinRead, Debug)]
-#[br(little)]
-pub struct RgbQuad {
-    pub blue: u8,
-    pub green: u8,
-    pub red: u8,
-    pub reserved: u8,
 }
 
 /// https://learn.microsoft.com/en-us/previous-versions/ms788112(v=vs.85)
@@ -139,6 +123,7 @@ pub struct WaveFormatEx {
     pub av_bytes_per_sec: u32,
     pub block_align: u16,
     pub bits_per_sample: u16,
+    #[br(try)]
     pub size: u16,
 }
 
@@ -299,6 +284,18 @@ impl<R: Read + Seek> AviParser<R> {
             .ok_or_else(Self::eof_error)??;
 
         Ok(Self { stream_info, movi })
+    }
+
+    pub fn iter(&self, stream_id: Fourcc) -> impl Iterator<Item = Result<RiffType<R>, Error>> + '_ {
+        self.movi.iter().filter(move |result| {
+            if let Ok(RiffType::Chunk(chunk)) = result
+                && chunk.id() == stream_id
+            {
+                true
+            } else {
+                false
+            }
+        })
     }
 }
 

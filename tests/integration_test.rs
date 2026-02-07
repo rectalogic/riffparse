@@ -105,38 +105,8 @@ fn test_avi_video() {
     else {
         panic!("stream 1 not audio");
     };
-    assert_eq!(
-        avi_parser
-            .movi
-            .iter()
-            .filter(|result| {
-                if let Ok(RiffType::Chunk(chunk)) = result
-                    && chunk.id() == video_id
-                {
-                    true
-                } else {
-                    false
-                }
-            })
-            .count(),
-        20
-    );
-    assert_eq!(
-        avi_parser
-            .movi
-            .iter()
-            .filter(|result| {
-                if let Ok(RiffType::Chunk(chunk)) = result
-                    && chunk.id() == audio_id
-                {
-                    true
-                } else {
-                    false
-                }
-            })
-            .count(),
-        15
-    );
+    assert_eq!(avi_parser.iter(video_id).count(), 20);
+    assert_eq!(avi_parser.iter(audio_id).count(), 15);
 }
 
 #[cfg(feature = "embedded-io")]

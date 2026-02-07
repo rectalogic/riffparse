@@ -1,5 +1,6 @@
 use alloc::rc::Rc;
 use alloc::{boxed::Box, vec, vec::Vec};
+use binrw::io::TakeSeekExt;
 use binrw::{
     BinRead, BinResult, Error as BinError,
     io::{Read, Seek, SeekFrom},
@@ -147,7 +148,12 @@ impl<H: Header, R: Read + Seek> Riff<H, R> {
         S: BinRead + ReadEndian + Sized,
         for<'a> <S as BinRead>::Args<'a>: Default,
     {
-        S::read(&mut *self.reader.borrow_mut())
+        let mut reader = self.reader.borrow_mut();
+        reader
+            .seek(SeekFrom::Start(self.data_start))
+            .map_err(BinError::Io)?;
+        let mut limited_reader = reader.by_ref().take_seek(self.data_size() as u64);
+        S::read(&mut limited_reader)
     }
 
     pub fn read_data_vec(&mut self) -> BinResult<Vec<u8>> {
@@ -161,11 +167,10 @@ impl<H: Header, R: Read + Seek> Riff<H, R> {
         let data_size = self.data_size();
         let data_pad = self.data_pad();
         let mut reader = self.reader.borrow_mut();
-        if buffer.len() != data_size as usize {
-            let pos = reader.stream_position().unwrap_or(0);
+        if buffer.len() > data_size as usize {
             return Err(BinError::AssertFail {
-                pos,
-                message: "read buffer too small".into(),
+                pos: self.data_start,
+                message: "buffer too large".into(),
             });
         }
         reader.read_exact(buffer).map_err(BinError::Io)?;

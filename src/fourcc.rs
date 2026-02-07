@@ -28,7 +28,7 @@ impl Debug for Fourcc {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let bytes = self.bytes();
         if let Ok(s) = str::from_utf8(&bytes) {
-            write!(f, "Fourcc({s})")
+            write!(f, "Fourcc({})", s.escape_debug())
         } else {
             write!(f, "Fourcc({bytes:?})")
         }
@@ -39,7 +39,7 @@ impl Display for Fourcc {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let bytes = self.bytes();
         if let Ok(s) = str::from_utf8(&bytes) {
-            write!(f, "{s}")
+            write!(f, "{}", s.escape_debug())
         } else {
             write!(f, "{}", self.0)
         }
