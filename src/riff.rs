@@ -71,6 +71,9 @@ impl<R: Read + Seek> RiffParser<R> {
                 message: "buffer too large".into(),
             });
         }
+        reader
+            .seek(SeekFrom::Start(chunk.data_start))
+            .map_err(BinError::Io)?;
         reader.read_exact(buffer).map_err(BinError::Io)?;
         // Skip padding byte
         if data_pad == 1 {

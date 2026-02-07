@@ -102,6 +102,31 @@ fn test_mp3_avi() {
 }
 
 #[test]
+fn test_cross_reader() {
+    let parser1 = RiffParser::new(Cursor::new(TEST_AVI));
+    let riff = parser1.riff().unwrap();
+    let mut chunks = parser1.chunks(riff);
+    chunks.next().unwrap().unwrap();
+    chunks.next().unwrap().unwrap();
+    let chunk = chunks.next().unwrap().unwrap();
+    let parser2 = RiffParser::new(Cursor::new(TEST_AVI));
+    match chunk {
+        RiffType::List(chunk) => {
+            assert_eq!(
+                parser1.read_data_vec(chunk).unwrap(),
+                parser2.read_data_vec(chunk).unwrap()
+            );
+        }
+        RiffType::Chunk(chunk) => {
+            assert_eq!(
+                parser1.read_data_vec(chunk).unwrap(),
+                parser2.read_data_vec(chunk).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
 fn test_avi_video() {
     let parser = RiffParser::new(Cursor::new(TEST_AVI));
     let avi_parser = avi::AviParser::new(parser).unwrap();
