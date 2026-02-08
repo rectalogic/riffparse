@@ -177,20 +177,76 @@ pub struct Mp3WaveFormat {
 
 #[derive(Debug)]
 pub enum StreamInfo {
-    Audio {
-        stream_id: Fourcc,
-        stream_header: AviStreamHeader,
-        wave_format: WaveFormat,
-    },
-    Video {
-        stream_id: Fourcc,
-        stream_header: AviStreamHeader,
-        bitmap_info: BitmapInfo,
-    },
+    Audio(AudioStream),
+    Video(VideoStream),
+}
+
+pub trait StreamKind {
+    fn from_stream_info(stream_info: &StreamInfo) -> Option<&Self>;
+}
+
+pub trait Stream: StreamKind {
+    fn stream_id(&self) -> Fourcc;
+    fn stream_header(&self) -> &AviStreamHeader;
+}
+
+#[derive(Debug)]
+pub struct AudioStream {
+    pub stream_id: Fourcc,
+    pub stream_header: AviStreamHeader,
+    pub wave_format: WaveFormat,
+}
+
+impl StreamKind for AudioStream {
+    fn from_stream_info(stream_info: &StreamInfo) -> Option<&Self> {
+        if let StreamInfo::Audio(a) = stream_info {
+            Some(a)
+        } else {
+            None
+        }
+    }
+}
+
+impl Stream for AudioStream {
+    fn stream_id(&self) -> Fourcc {
+        self.stream_id
+    }
+
+    fn stream_header(&self) -> &AviStreamHeader {
+        &self.stream_header
+    }
+}
+
+#[derive(Debug)]
+pub struct VideoStream {
+    pub stream_id: Fourcc,
+    pub stream_header: AviStreamHeader,
+    pub bitmap_info: BitmapInfo,
+}
+
+impl StreamKind for VideoStream {
+    fn from_stream_info(stream_info: &StreamInfo) -> Option<&Self> {
+        if let StreamInfo::Video(v) = stream_info {
+            Some(v)
+        } else {
+            None
+        }
+    }
+}
+
+impl Stream for VideoStream {
+    fn stream_id(&self) -> Fourcc {
+        self.stream_id
+    }
+
+    fn stream_header(&self) -> &AviStreamHeader {
+        &self.stream_header
+    }
 }
 
 pub struct AviParser<R> {
     parser: RiffParser<R>,
+    pub avi_header: AviMainHeader,
     pub stream_info: Vec<StreamInfo>,
     pub movi: Riff<List>,
 }
@@ -235,7 +291,7 @@ impl<R: Read + Seek> AviParser<R> {
             match stream_header.fcc_type {
                 tag::VIDS => {
                     let bitmap_info = parser.read_data_struct::<BitmapInfo>(strf)?;
-                    stream_info.push(StreamInfo::Video {
+                    stream_info.push(StreamInfo::Video(VideoStream {
                         stream_id: tag::stream(
                             stream_index,
                             //XXX how do we pick compressed/uncompressed
@@ -243,15 +299,15 @@ impl<R: Read + Seek> AviParser<R> {
                         ),
                         stream_header,
                         bitmap_info,
-                    });
+                    }));
                 }
                 tag::AUDS => {
                     let wave_format = parser.read_data_struct::<WaveFormat>(strf)?;
-                    stream_info.push(StreamInfo::Audio {
+                    stream_info.push(StreamInfo::Audio(AudioStream {
                         stream_id: tag::stream(stream_index, tag::DATA_AUDIO),
                         stream_header,
                         wave_format,
-                    });
+                    }));
                 }
                 _ => {}
             }
@@ -267,13 +323,25 @@ impl<R: Read + Seek> AviParser<R> {
 
         Ok(Self {
             parser,
+            avi_header: main_header,
             stream_info,
             movi,
         })
     }
 
-    pub fn iter(&self, stream_id: Fourcc) -> impl Iterator<Item = Result<RiffType, Error>> + '_ {
-        self.parser.chunks(self.movi).filter(move |result| {
+    pub fn find_best_stream<S: Stream>(&self) -> Option<&S> {
+        self.stream_info
+            .iter()
+            .filter_map(|stream| S::from_stream_info(stream))
+            .max_by_key(|stream| stream.stream_header().priority)
+    }
+
+    pub fn stream_chunks(
+        &self,
+        stream_id: Fourcc,
+        movi: Riff<List>,
+    ) -> impl Iterator<Item = Result<RiffType, Error>> + '_ {
+        self.parser.chunks(movi).filter(move |result| {
             if let Ok(RiffType::Chunk(chunk)) = result
                 && chunk.id() == stream_id
             {
@@ -282,6 +350,13 @@ impl<R: Read + Seek> AviParser<R> {
                 false
             }
         })
+    }
+
+    pub fn movi_chunks(
+        &self,
+        stream_id: Fourcc,
+    ) -> impl Iterator<Item = Result<RiffType, Error>> + '_ {
+        self.stream_chunks(stream_id, self.movi)
     }
 
     fn eof_error() -> Error {

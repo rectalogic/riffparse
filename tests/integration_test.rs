@@ -127,26 +127,24 @@ fn test_cross_reader() {
 }
 
 #[test]
-fn test_avi_video() {
+fn test_avi_parser() {
     let parser = RiffParser::new(Cursor::new(TEST_AVI));
     let avi_parser = avi::AviParser::new(parser).unwrap();
 
-    let avi::StreamInfo::Video {
-        stream_id: video_id,
-        ..
-    } = avi_parser.stream_info[0]
-    else {
+    let avi::StreamInfo::Video(ref video_stream) = avi_parser.stream_info[0] else {
         panic!("stream 0 not video");
     };
-    let avi::StreamInfo::Audio {
-        stream_id: audio_id,
-        ..
-    } = avi_parser.stream_info[1]
-    else {
+    let avi::StreamInfo::Audio(ref audio_stream) = avi_parser.stream_info[1] else {
         panic!("stream 1 not audio");
     };
-    assert_eq!(avi_parser.iter(video_id).count(), 20);
-    assert_eq!(avi_parser.iter(audio_id).count(), 15);
+    let Some(stream) = avi_parser.find_best_stream::<avi::VideoStream>() else {
+        panic!("stream not found");
+    };
+    assert_eq!(stream.stream_header.priority, 0);
+    assert_eq!(stream.stream_id, video_stream.stream_id);
+
+    assert_eq!(avi_parser.movi_chunks(video_stream.stream_id).count(), 20);
+    assert_eq!(avi_parser.movi_chunks(audio_stream.stream_id).count(), 15);
 }
 
 #[cfg(feature = "embedded-io")]
