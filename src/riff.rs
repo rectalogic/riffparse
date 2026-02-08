@@ -89,22 +89,6 @@ pub enum RiffType {
     Chunk(Riff<Chunk>),
 }
 
-impl Header for RiffType {
-    fn id(&self) -> Fourcc {
-        match self {
-            RiffType::List(list) => list.id(),
-            RiffType::Chunk(chunk) => chunk.id(),
-        }
-    }
-
-    fn data_size(&self) -> u32 {
-        match self {
-            RiffType::List(list) => list.data_size(),
-            RiffType::Chunk(chunk) => chunk.data_size(),
-        }
-    }
-}
-
 pub trait Header: Copy + Clone + Debug {
     fn id(&self) -> Fourcc;
     fn data_size(&self) -> u32;
@@ -138,7 +122,8 @@ impl Header for List {
     }
 
     fn data_size(&self) -> u32 {
-        // The list_id is part of the data, but we read it as part of the header
+        // The list_id is part of the data, but we read it as part of the header,
+        // so don't count it as part of data size
         self.size - size_of::<Fourcc>() as u32
     }
 }
