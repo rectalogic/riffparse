@@ -4,7 +4,7 @@ use binrw::{
     BinRead, Error,
     io::{self, Read, Seek},
 };
-use core::fmt::Debug;
+use core::{convert::TryFrom, fmt::Debug};
 
 pub mod tag {
     use super::Fourcc;
@@ -181,11 +181,7 @@ pub enum StreamInfo {
     Video(VideoStream),
 }
 
-pub trait StreamKind {
-    fn from_stream_info(stream_info: &StreamInfo) -> Option<&Self>;
-}
-
-pub trait Stream: StreamKind {
+pub trait Stream {
     fn stream_id(&self) -> Fourcc;
     fn stream_header(&self) -> &AviStreamHeader;
 }
@@ -197,12 +193,13 @@ pub struct AudioStream {
     pub wave_format: WaveFormat,
 }
 
-impl StreamKind for AudioStream {
-    fn from_stream_info(stream_info: &StreamInfo) -> Option<&Self> {
-        if let StreamInfo::Audio(a) = stream_info {
-            Some(a)
-        } else {
-            None
+impl<'a> TryFrom<&'a StreamInfo> for &'a AudioStream {
+    type Error = ();
+
+    fn try_from(value: &'a StreamInfo) -> Result<Self, Self::Error> {
+        match value {
+            StreamInfo::Audio(a) => Ok(a),
+            _ => Err(()),
         }
     }
 }
@@ -224,12 +221,13 @@ pub struct VideoStream {
     pub bitmap_info: BitmapInfo,
 }
 
-impl StreamKind for VideoStream {
-    fn from_stream_info(stream_info: &StreamInfo) -> Option<&Self> {
-        if let StreamInfo::Video(v) = stream_info {
-            Some(v)
-        } else {
-            None
+impl<'a> TryFrom<&'a StreamInfo> for &'a VideoStream {
+    type Error = ();
+
+    fn try_from(value: &'a StreamInfo) -> Result<Self, Self::Error> {
+        match value {
+            StreamInfo::Video(v) => Ok(v),
+            _ => Err(()),
         }
     }
 }
@@ -329,11 +327,15 @@ impl<R: Read + Seek> AviParser<R> {
         })
     }
 
-    pub fn find_best_stream<S: Stream>(&self) -> Option<&S> {
+    pub fn find_best_stream<S>(&self) -> Option<&S>
+    where
+        for<'a> &'a S: TryFrom<&'a StreamInfo, Error = ()>,
+        S: Stream,
+    {
         self.stream_info
             .iter()
-            .filter_map(|stream| S::from_stream_info(stream))
-            .max_by_key(|stream| stream.stream_header().priority)
+            .filter_map(|stream| <&S>::try_from(stream).ok())
+            .max_by_key(|&stream| stream.stream_header().priority)
     }
 
     pub fn stream_chunks(
