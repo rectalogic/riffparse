@@ -19,6 +19,10 @@ impl Fourcc {
         Self(u32::from_le_bytes(bytes))
     }
 
+    pub const fn from_u32(value: u32) -> Self {
+        Self(value)
+    }
+
     pub const fn bytes(&self) -> [u8; 4] {
         self.0.to_le_bytes()
     }
@@ -57,5 +61,11 @@ impl Deref for Fourcc {
 impl From<[u8; 4]> for Fourcc {
     fn from(bytes: [u8; 4]) -> Self {
         Self::new(bytes)
+    }
+}
+
+impl From<u32> for Fourcc {
+    fn from(value: u32) -> Self {
+        Self::from_u32(value)
     }
 }
