@@ -361,8 +361,8 @@ impl<R: Read + Seek> AviParser<R> {
         self.stream_chunks(stream_id, self.movi)
     }
 
-    pub fn riff_parser(&mut self) -> &mut RiffParser<R> {
-        &mut self.parser
+    pub fn riff_parser(&self) -> &RiffParser<R> {
+        &self.parser
     }
 
     fn eof_error() -> Error {
