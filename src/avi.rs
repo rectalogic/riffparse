@@ -1,4 +1,4 @@
-use crate::{List, Riff, RiffParser, RiffType, fourcc::Fourcc, riff::Header};
+use crate::{Chunk, List, Riff, RiffParser, RiffType, fourcc::Fourcc, riff::Header};
 use alloc::{format, vec::Vec};
 use binrw::{
     BinRead, Error,
@@ -37,7 +37,7 @@ pub mod tag {
 }
 
 /// https://learn.microsoft.com/en-us/previous-versions/ms779632(v=vs.85)
-#[derive(BinRead, Debug)]
+#[derive(BinRead, Clone, Debug)]
 #[br(little)]
 pub struct AviMainHeader {
     pub micro_sec_per_frame: u32,
@@ -54,7 +54,7 @@ pub struct AviMainHeader {
 }
 
 /// https://learn.microsoft.com/en-us/previous-versions/ms779638(v=vs.85)
-#[derive(BinRead, Debug)]
+#[derive(BinRead, Clone, Debug)]
 #[br(little)]
 pub struct AviStreamHeader {
     pub fcc_type: Fourcc,
@@ -73,7 +73,7 @@ pub struct AviStreamHeader {
     pub frame: Frame,
 }
 
-#[derive(BinRead, Debug)]
+#[derive(BinRead, Clone, Debug)]
 #[br(little)]
 pub struct Frame {
     pub left: i16,
@@ -85,7 +85,7 @@ pub struct Frame {
 /// https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2012/z5731wbz(v=vs.110)
 /// https://learn.microsoft.com/en-us/previous-versions/dd183376(v=vs.85)
 // Ignore RGBQUAD bmiColors[1] array at end
-#[derive(BinRead, Debug)]
+#[derive(BinRead, Clone, Debug)]
 #[br(little)]
 pub struct BitmapInfo {
     pub size: u32,
@@ -102,7 +102,7 @@ pub struct BitmapInfo {
 }
 
 /// https://learn.microsoft.com/en-us/previous-versions/ms788112(v=vs.85)
-#[derive(BinRead, Debug)]
+#[derive(BinRead, Clone, Debug)]
 #[br(little)]
 pub enum WaveFormat {
     #[br(magic = 0x0001u16)]
@@ -115,7 +115,7 @@ pub enum WaveFormat {
     Mp3(Mp3WaveFormat),
 }
 
-#[derive(BinRead, Debug)]
+#[derive(BinRead, Clone, Debug)]
 #[br(little)]
 pub struct WaveFormatEx {
     pub channels: u16,
@@ -127,7 +127,7 @@ pub struct WaveFormatEx {
     pub size: u16,
 }
 
-#[derive(BinRead, Debug)]
+#[derive(BinRead, Clone, Debug)]
 #[br(little)]
 pub struct WaveFormatExtensible {
     pub format: WaveFormatEx,
@@ -141,7 +141,7 @@ pub struct WaveFormatExtensible {
     pub sub_format: Guid,
 }
 
-#[derive(BinRead, Debug)]
+#[derive(BinRead, Clone, Debug)]
 #[br(little)]
 pub struct Guid {
     pub data1: u32,
@@ -150,7 +150,7 @@ pub struct Guid {
     pub data4: [u8; 8],
 }
 
-#[derive(BinRead, Debug)]
+#[derive(BinRead, Clone, Debug)]
 #[br(little)]
 pub struct Mpeg1WaveFormat {
     pub format: WaveFormatEx,
@@ -164,7 +164,7 @@ pub struct Mpeg1WaveFormat {
     pub pts_high: u32,
 }
 
-#[derive(BinRead, Debug)]
+#[derive(BinRead, Clone, Debug)]
 #[br(little)]
 pub struct Mp3WaveFormat {
     pub format: WaveFormatEx,
@@ -175,7 +175,7 @@ pub struct Mp3WaveFormat {
     pub codec_delay: u16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StreamInfo {
     Audio(AudioStream),
     Video(VideoStream),
@@ -186,7 +186,7 @@ pub trait Stream {
     fn stream_header(&self) -> &AviStreamHeader;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AudioStream {
     pub stream_id: Fourcc,
     pub stream_header: AviStreamHeader,
@@ -214,7 +214,7 @@ impl Stream for AudioStream {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VideoStream {
     pub stream_id: Fourcc,
     pub stream_header: AviStreamHeader,
@@ -342,14 +342,14 @@ impl<R: Read + Seek> AviParser<R> {
         &self,
         stream_id: Fourcc,
         movi: Riff<List>,
-    ) -> impl Iterator<Item = Result<RiffType, Error>> + '_ {
-        self.parser.chunks(movi).filter(move |result| {
+    ) -> impl Iterator<Item = Result<Riff<Chunk>, Error>> + '_ {
+        self.parser.chunks(movi).filter_map(move |result| {
             if let Ok(RiffType::Chunk(chunk)) = result
                 && chunk.id() == stream_id
             {
-                true
+                Some(Ok(chunk))
             } else {
-                false
+                None
             }
         })
     }
@@ -357,8 +357,12 @@ impl<R: Read + Seek> AviParser<R> {
     pub fn movi_chunks(
         &self,
         stream_id: Fourcc,
-    ) -> impl Iterator<Item = Result<RiffType, Error>> + '_ {
+    ) -> impl Iterator<Item = Result<Riff<Chunk>, Error>> + '_ {
         self.stream_chunks(stream_id, self.movi)
+    }
+
+    pub fn riff_parser(&mut self) -> &mut RiffParser<R> {
+        &mut self.parser
     }
 
     fn eof_error() -> Error {
