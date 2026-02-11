@@ -63,7 +63,6 @@ impl<R: Read + Seek> RiffParser<R> {
 
     pub fn read_data<H: Header>(&self, chunk: Riff<H>, buffer: &mut [u8]) -> BinResult<()> {
         let data_size = chunk.data_size();
-        let data_pad = chunk.data_pad();
         let mut reader = self.reader.borrow_mut();
         if buffer.len() > data_size as usize {
             return Err(BinError::AssertFail {
@@ -75,10 +74,6 @@ impl<R: Read + Seek> RiffParser<R> {
             .seek(SeekFrom::Start(chunk.data_start))
             .map_err(BinError::Io)?;
         reader.read_exact(buffer).map_err(BinError::Io)?;
-        // Skip padding byte
-        if data_pad == 1 {
-            reader.read_exact(&mut [0u8; 1]).map_err(BinError::Io)?;
-        }
         Ok(())
     }
 }
