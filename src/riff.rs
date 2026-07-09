@@ -6,6 +6,7 @@ use binrw::{
     io::{Read, Seek, SeekFrom},
     meta::ReadEndian,
 };
+use bytes::BytesMut;
 use core::{cell::RefCell, fmt::Debug, iter::Iterator, mem::size_of};
 
 use crate::fourcc::Fourcc;
@@ -52,6 +53,21 @@ impl<R: Read + Seek> RiffParser<R> {
             .map_err(BinError::Io)?;
         let mut limited_reader = reader.by_ref().take_seek(chunk.data_size() as u64);
         S::read(&mut limited_reader)
+    }
+
+    pub fn read_data_bytes<H: Header>(
+        &self,
+        chunk: Riff<H>,
+        buffer: &mut BytesMut,
+    ) -> BinResult<()> {
+        let data_size = chunk.data_size() as usize;
+        buffer.reserve(data_size.saturating_sub(buffer.capacity()));
+        // SAFETY: read_data fills the buffer
+        unsafe {
+            buffer.set_len(data_size);
+        }
+        self.read_data(chunk, buffer)?;
+        Ok(())
     }
 
     pub fn read_data_vec<H: Header>(&self, chunk: Riff<H>) -> BinResult<Vec<u8>> {

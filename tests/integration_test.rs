@@ -2,6 +2,7 @@
 
 extern crate alloc;
 use alloc::{string::String, vec::Vec};
+use bytes::BytesMut;
 use core::fmt::Debug;
 #[cfg(feature = "embedded-io")]
 use riffparse::EmbeddedAdapter;
@@ -143,8 +144,33 @@ fn test_avi_parser() {
     assert_eq!(stream.stream_header.priority, 0);
     assert_eq!(stream.stream_id, video_stream.stream_id);
 
-    assert_eq!(avi_parser.movi_chunks(video_stream.stream_id).count(), 20);
-    assert_eq!(avi_parser.movi_chunks(audio_stream.stream_id).count(), 15);
+    let mut buffer = BytesMut::new();
+
+    let mut video_chunks = avi_parser.movi_chunks(video_stream.stream_id);
+    avi_parser
+        .riff_parser()
+        .read_data_bytes(video_chunks.next().unwrap().unwrap(), &mut buffer)
+        .unwrap();
+    assert_eq!(1267, buffer.len());
+    avi_parser
+        .riff_parser()
+        .read_data_bytes(video_chunks.next().unwrap().unwrap(), &mut buffer)
+        .unwrap();
+    assert_eq!(1258, buffer.len());
+    assert_eq!(video_chunks.count(), 18);
+
+    let mut audio_chunks = avi_parser.movi_chunks(audio_stream.stream_id);
+    avi_parser
+        .riff_parser()
+        .read_data_bytes(audio_chunks.next().unwrap().unwrap(), &mut buffer)
+        .unwrap();
+    assert_eq!(2048, buffer.len());
+    avi_parser
+        .riff_parser()
+        .read_data_bytes(audio_chunks.next().unwrap().unwrap(), &mut buffer)
+        .unwrap();
+    assert_eq!(2048, buffer.len());
+    assert_eq!(audio_chunks.count(), 13);
 }
 
 #[cfg(feature = "embedded-io")]
