@@ -3,12 +3,13 @@
 extern crate alloc;
 use alloc::{string::String, vec::Vec};
 use bytes::BytesMut;
-use core::fmt::Debug;
+use core::{assert_matches, fmt::Debug};
 #[cfg(feature = "embedded-io")]
 use riffparse::EmbeddedAdapter;
 use riffparse::{
     List, Read, Riff, RiffParser, RiffType, Seek, avi,
     binrw::io::{Cursor, Write},
+    fourcc::Fourcc,
 };
 
 // Generate test video:
@@ -143,10 +144,23 @@ fn test_avi_parser() {
     };
     assert_eq!(stream.stream_header.priority, 0);
     assert_eq!(stream.stream_id, video_stream.stream_id);
+    assert_eq!(stream.stream_header.fcc_handler, Fourcc::new(*b"MJPG"));
+    let Some(stream) = avi_parser.find_best_stream::<avi::AudioStream>() else {
+        panic!("stream not found");
+    };
+    assert_eq!(stream.stream_id, audio_stream.stream_id);
+    assert_matches!(
+        stream.wave_format,
+        avi::WaveFormat::Pcm(avi::WaveFormatEx {
+            channels: 1,
+            samples_per_sec: 16000,
+            ..
+        })
+    );
 
     let mut buffer = BytesMut::new();
 
-    let mut video_chunks = avi_parser.movi_chunks(video_stream.stream_id);
+    let mut video_chunks = avi_parser.movi_chunks(|id| id == video_stream.stream_id);
     avi_parser
         .riff_parser()
         .read_data_bytes(video_chunks.next().unwrap().unwrap(), &mut buffer)
@@ -159,7 +173,7 @@ fn test_avi_parser() {
     assert_eq!(1258, buffer.len());
     assert_eq!(video_chunks.count(), 18);
 
-    let mut audio_chunks = avi_parser.movi_chunks(audio_stream.stream_id);
+    let mut audio_chunks = avi_parser.movi_chunks(|id| id == audio_stream.stream_id);
     avi_parser
         .riff_parser()
         .read_data_bytes(audio_chunks.next().unwrap().unwrap(), &mut buffer)

@@ -9,6 +9,7 @@ pub mod tag {
     use super::Fourcc;
     pub const RIFF: Fourcc = Fourcc::new(*b"RIFF");
     pub const LIST: Fourcc = Fourcc::new(*b"LIST");
+    pub const NULL: Fourcc = Fourcc::from_u32(0);
 }
 
 #[derive(BinRead, Copy, Clone, Eq, PartialEq)]

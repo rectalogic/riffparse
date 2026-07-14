@@ -1,4 +1,4 @@
-use crate::{Chunk, List, Riff, RiffParser, RiffType, fourcc::Fourcc, riff::Header};
+use crate::{Chunk, List, ListIter, Riff, RiffParser, RiffType, fourcc::Fourcc, riff::Header};
 use alloc::{format, vec::Vec};
 use binrw::{
     BinRead, Error,
@@ -242,6 +242,32 @@ impl Stream for VideoStream {
     }
 }
 
+pub struct ChunkIter<R, F> {
+    inner: ListIter<R>,
+    filter: F,
+}
+
+impl<R, F> Iterator for ChunkIter<R, F>
+where
+    R: Read + Seek,
+    F: FnMut(Fourcc) -> bool,
+{
+    type Item = Result<Riff<Chunk>, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.inner.next() {
+                Some(Ok(RiffType::Chunk(chunk))) if (self.filter)(chunk.id()) => {
+                    return Some(Ok(chunk));
+                }
+                Some(Ok(_)) => continue, // skip lists/non-matching chunks
+                Some(Err(e)) => return Some(Err(e)),
+                None => return None,
+            }
+        }
+    }
+}
+
 pub struct AviParser<R> {
     parser: RiffParser<R>,
     pub avi_header: AviMainHeader,
@@ -338,27 +364,21 @@ impl<R: Read + Seek> AviParser<R> {
             .max_by_key(|&stream| stream.stream_header().priority)
     }
 
-    pub fn stream_chunks(
-        &self,
-        stream_id: Fourcc,
-        movi: Riff<List>,
-    ) -> impl Iterator<Item = Result<Riff<Chunk>, Error>> + '_ {
-        self.parser.chunks(movi).filter_map(move |result| {
-            if let Ok(RiffType::Chunk(chunk)) = result
-                && chunk.id() == stream_id
-            {
-                Some(Ok(chunk))
-            } else {
-                None
-            }
-        })
+    pub fn stream_chunks<F>(&self, movi: Riff<List>, f: F) -> ChunkIter<R, F>
+    where
+        F: FnMut(Fourcc) -> bool,
+    {
+        ChunkIter {
+            inner: self.parser.chunks(movi),
+            filter: f,
+        }
     }
 
-    pub fn movi_chunks(
-        &self,
-        stream_id: Fourcc,
-    ) -> impl Iterator<Item = Result<Riff<Chunk>, Error>> + '_ {
-        self.stream_chunks(stream_id, self.movi)
+    pub fn movi_chunks<F>(&self, f: F) -> ChunkIter<R, F>
+    where
+        F: FnMut(Fourcc) -> bool,
+    {
+        self.stream_chunks(self.movi, f)
     }
 
     pub fn riff_parser(&self) -> &RiffParser<R> {
