@@ -2,7 +2,6 @@
 
 extern crate alloc;
 use alloc::{string::String, vec::Vec};
-use bytes::BytesMut;
 use core::{assert_matches, fmt::Debug};
 #[cfg(feature = "embedded-io")]
 use riffparse::EmbeddedAdapter;
@@ -115,14 +114,14 @@ fn test_cross_reader() {
     match chunk {
         RiffType::List(chunk) => {
             assert_eq!(
-                parser1.read_data_vec(chunk).unwrap(),
-                parser2.read_data_vec(chunk).unwrap()
+                parser1.read_data_alloc_vec(chunk).unwrap(),
+                parser2.read_data_alloc_vec(chunk).unwrap()
             );
         }
         RiffType::Chunk(chunk) => {
             assert_eq!(
-                parser1.read_data_vec(chunk).unwrap(),
-                parser2.read_data_vec(chunk).unwrap()
+                parser1.read_data_alloc_vec(chunk).unwrap(),
+                parser2.read_data_alloc_vec(chunk).unwrap()
             );
         }
     }
@@ -158,33 +157,36 @@ fn test_avi_parser() {
         })
     );
 
-    let mut buffer = BytesMut::new();
+    #[cfg(feature = "bytes")]
+    {
+        let mut buffer = bytes::BytesMut::new();
 
-    let mut video_chunks = avi_parser.movi_chunks(|id| id == video_stream.stream_id);
-    avi_parser
-        .riff_parser()
-        .read_data_bytes(video_chunks.next().unwrap().unwrap(), &mut buffer)
-        .unwrap();
-    assert_eq!(1267, buffer.len());
-    avi_parser
-        .riff_parser()
-        .read_data_bytes(video_chunks.next().unwrap().unwrap(), &mut buffer)
-        .unwrap();
-    assert_eq!(1258, buffer.len());
-    assert_eq!(video_chunks.count(), 18);
+        let mut video_chunks = avi_parser.movi_chunks(|id| id == video_stream.stream_id);
+        avi_parser
+            .riff_parser()
+            .read_data_bytes(video_chunks.next().unwrap().unwrap(), &mut buffer)
+            .unwrap();
+        assert_eq!(1267, buffer.len());
+        avi_parser
+            .riff_parser()
+            .read_data_bytes(video_chunks.next().unwrap().unwrap(), &mut buffer)
+            .unwrap();
+        assert_eq!(1258, buffer.len());
+        assert_eq!(video_chunks.count(), 18);
 
-    let mut audio_chunks = avi_parser.movi_chunks(|id| id == audio_stream.stream_id);
-    avi_parser
-        .riff_parser()
-        .read_data_bytes(audio_chunks.next().unwrap().unwrap(), &mut buffer)
-        .unwrap();
-    assert_eq!(2048, buffer.len());
-    avi_parser
-        .riff_parser()
-        .read_data_bytes(audio_chunks.next().unwrap().unwrap(), &mut buffer)
-        .unwrap();
-    assert_eq!(2048, buffer.len());
-    assert_eq!(audio_chunks.count(), 13);
+        let mut audio_chunks = avi_parser.movi_chunks(|id| id == audio_stream.stream_id);
+        avi_parser
+            .riff_parser()
+            .read_data_bytes(audio_chunks.next().unwrap().unwrap(), &mut buffer)
+            .unwrap();
+        assert_eq!(2048, buffer.len());
+        avi_parser
+            .riff_parser()
+            .read_data_bytes(audio_chunks.next().unwrap().unwrap(), &mut buffer)
+            .unwrap();
+        assert_eq!(2048, buffer.len());
+        assert_eq!(audio_chunks.count(), 13);
+    }
 }
 
 #[cfg(feature = "embedded-io")]

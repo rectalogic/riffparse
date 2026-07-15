@@ -1,13 +1,16 @@
-use alloc::rc::Rc;
-use alloc::{boxed::Box, vec, vec::Vec};
-use binrw::io::TakeSeekExt;
+use alloc::{boxed::Box, rc::Rc, vec, vec::Vec};
 use binrw::{
     BinRead, BinResult, Error as BinError,
-    io::{Read, Seek, SeekFrom},
+    io::{Read, Seek, SeekFrom, TakeSeekExt},
     meta::ReadEndian,
 };
-use bytes::BytesMut;
-use core::{cell::RefCell, fmt::Debug, iter::Iterator, mem::size_of};
+use core::{
+    cell::RefCell,
+    fmt::Debug,
+    iter::Iterator,
+    mem::size_of,
+    ops::{Deref, DerefMut},
+};
 
 use crate::fourcc::Fourcc;
 
@@ -55,22 +58,44 @@ impl<R: Read + Seek> RiffParser<R> {
         S::read(&mut limited_reader)
     }
 
-    pub fn read_data_bytes<H: Header>(
-        &self,
-        chunk: Riff<H>,
-        buffer: &mut BytesMut,
-    ) -> BinResult<()> {
+    #[inline]
+    fn read_data_buf<B, H: Header>(&self, chunk: Riff<H>, buffer: &mut B) -> BinResult<()>
+    where
+        B: Buffer,
+    {
         let data_size = chunk.data_size() as usize;
         buffer.reserve(data_size.saturating_sub(buffer.capacity()));
-        // SAFETY: read_data fills the buffer
+        let prev_len = buffer.len();
+        // SAFETY: read_data fills the buffer; on error we restore prev_len
         unsafe {
             buffer.set_len(data_size);
         }
-        self.read_data(chunk, buffer)?;
-        Ok(())
+        match self.read_data(chunk, buffer.deref_mut()) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // SAFETY: prev_len was the valid length before we changed it
+                unsafe {
+                    buffer.set_len(prev_len);
+                }
+                Err(e)
+            }
+        }
     }
 
-    pub fn read_data_vec<H: Header>(&self, chunk: Riff<H>) -> BinResult<Vec<u8>> {
+    #[cfg(feature = "bytes")]
+    pub fn read_data_bytes<H: Header>(
+        &self,
+        chunk: Riff<H>,
+        buffer: &mut bytes::BytesMut,
+    ) -> BinResult<()> {
+        self.read_data_buf(chunk, buffer)
+    }
+
+    pub fn read_data_vec<H: Header>(&self, chunk: Riff<H>, buffer: &mut Vec<u8>) -> BinResult<()> {
+        self.read_data_buf(chunk, buffer)
+    }
+
+    pub fn read_data_alloc_vec<H: Header>(&self, chunk: Riff<H>) -> BinResult<Vec<u8>> {
         let data_size = chunk.data_size();
         let mut buffer = vec![0u8; data_size as usize];
         self.read_data(chunk, &mut buffer)?;
@@ -91,6 +116,50 @@ impl<R: Read + Seek> RiffParser<R> {
             .map_err(BinError::Io)?;
         reader.read_exact(buffer).map_err(BinError::Io)?;
         Ok(())
+    }
+}
+
+pub trait Buffer: Deref<Target = [u8]> + DerefMut {
+    fn len(&self) -> usize;
+    fn capacity(&self) -> usize;
+    fn reserve(&mut self, additional: usize);
+    unsafe fn set_len(&mut self, len: usize);
+}
+
+impl Buffer for Vec<u8> {
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+
+    fn capacity(&self) -> usize {
+        Vec::capacity(self)
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        Vec::reserve(self, additional)
+    }
+
+    unsafe fn set_len(&mut self, len: usize) {
+        unsafe { Vec::set_len(self, len) }
+    }
+}
+
+#[cfg(feature = "bytes")]
+impl Buffer for bytes::BytesMut {
+    fn len(&self) -> usize {
+        bytes::BytesMut::len(self)
+    }
+
+    fn capacity(&self) -> usize {
+        bytes::BytesMut::capacity(self)
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        bytes::BytesMut::reserve(self, additional)
+    }
+
+    unsafe fn set_len(&mut self, len: usize) {
+        unsafe { bytes::BytesMut::set_len(self, len) }
     }
 }
 

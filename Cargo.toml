@@ -1,15 +1,16 @@
 [package]
 name = "riffparse"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
 [features]
 default = ["std"]
 std = ["binrw/std", "binrw/verbose-backtrace"]
+bytes = ["dep:bytes"]
 embedded-io = ["dep:embedded-io"]
 
 [dependencies]
-binrw = { version = "0.15.0", default-features = false }
-bytes = { version = "1", default-features = false }
+binrw = { version = "0.15", default-features = false }
+bytes = { version = "1", default-features = false, optional = true }
 embedded-io = { version = "0.7", default-features = false, features = ["alloc"], optional = true }
